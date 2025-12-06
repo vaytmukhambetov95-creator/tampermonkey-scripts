@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      8.5.0
+// @version      9.0.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -46,39 +46,159 @@
     let selectedProducts = new Set();
     let currentCategoryEdit = null;
 
+    // SVG иконка цветка
+    const FLOWER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
+        <g fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M32 48 L32 58"/>
+            <path d="M28 52 Q24 50 22 54"/>
+            <path d="M36 52 Q40 50 42 54"/>
+            <path d="M32 48 C32 48 24 44 22 36 C20 28 24 22 32 22 C40 22 44 28 42 36 C40 44 32 48 32 48"/>
+            <path d="M32 22 C32 18 28 14 24 16 C20 18 20 24 24 26"/>
+            <path d="M32 22 C32 18 36 14 40 16 C44 18 44 24 40 26"/>
+            <path d="M24 26 C20 24 14 24 14 30 C14 36 20 36 24 34"/>
+            <path d="M40 26 C44 24 50 24 50 30 C50 36 44 36 40 34"/>
+            <path d="M24 34 C20 36 18 42 24 46 C28 48 32 48 32 48"/>
+            <path d="M40 34 C44 36 46 42 40 46 C36 48 32 48 32 48"/>
+        </g>
+    </svg>`;
+
     function createMainButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
 
+        // Добавляем CSS анимацию перелива
+        if (!document.getElementById('catalog-button-styles')) {
+            const style = document.createElement('style');
+            style.id = 'catalog-button-styles';
+            style.textContent = `
+                @keyframes shimmer {
+                    0% { background-position: -200% center; }
+                    100% { background-position: 200% center; }
+                }
+                @keyframes pulse-glow {
+                    0%, 100% { box-shadow: 0 4px 20px rgba(255, 105, 180, 0.4); }
+                    50% { box-shadow: 0 4px 30px rgba(255, 105, 180, 0.7); }
+                }
+                #tilda-catalog-main-btn {
+                    background: linear-gradient(
+                        90deg,
+                        #FF69B4 0%,
+                        #FF85C8 25%,
+                        #FFB8D9 50%,
+                        #FF85C8 75%,
+                        #FF69B4 100%
+                    );
+                    background-size: 200% auto;
+                    animation: shimmer 3s linear infinite, pulse-glow 2s ease-in-out infinite;
+                }
+                #tilda-catalog-main-btn:hover {
+                    animation: shimmer 1.5s linear infinite, pulse-glow 1s ease-in-out infinite;
+                    transform: scale(1.1);
+                }
+                #tilda-catalog-main-btn.dragging {
+                    cursor: grabbing !important;
+                    opacity: 0.9;
+                    transform: scale(1.05);
+                }
+                #tilda-catalog-overlay, #tilda-catalog-overlay * {
+                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
+                }
+                #category-editor-overlay, #category-editor-overlay * {
+                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
         const button = document.createElement('button');
         button.id = 'tilda-catalog-main-btn';
-        button.innerHTML = 'Каталог Orange';
+        button.innerHTML = FLOWER_ICON_SVG;
+        button.title = 'Каталог Orange';
+
+        // Загружаем сохранённую позицию или используем дефолтную
+        const savedPosition = localStorage.getItem('catalog_button_position');
+        let posX = window.innerWidth - 80;
+        let posY = window.innerHeight - 160;
+
+        if (savedPosition) {
+            try {
+                const pos = JSON.parse(savedPosition);
+                posX = Math.min(pos.x, window.innerWidth - 60);
+                posY = Math.min(pos.y, window.innerHeight - 60);
+            } catch (e) {}
+        }
+
         button.style.cssText = `
             position: fixed;
-            bottom: 100px;
-            right: 20px;
-            padding: 12px 20px;
-            background: linear-gradient(135deg, #FF6B9D 0%, #C06C84 100%);
-            color: white;
+            left: ${posX}px;
+            top: ${posY}px;
+            width: 60px;
+            height: 60px;
+            padding: 0;
             border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            border-radius: 50%;
+            cursor: grab;
             z-index: 9998;
-            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease;
         `;
 
-        button.onmouseover = () => {
-            button.style.transform = 'translateY(-2px)';
-            button.style.boxShadow = '0 6px 20px rgba(0,0,0,0.3)';
-        };
-        button.onmouseout = () => {
-            button.style.transform = 'translateY(0)';
-            button.style.boxShadow = '0 4px 15px rgba(0,0,0,0.2)';
+        // Drag & Drop функционал
+        let isDragging = false;
+        let startX, startY, initialX, initialY;
+        let hasMoved = false;
+
+        button.onmousedown = (e) => {
+            isDragging = true;
+            hasMoved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialX = button.offsetLeft;
+            initialY = button.offsetTop;
+            button.classList.add('dragging');
+            e.preventDefault();
         };
 
-        button.onclick = () => openCatalogModal();
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+
+            if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+                hasMoved = true;
+            }
+
+            let newX = initialX + deltaX;
+            let newY = initialY + deltaY;
+
+            // Ограничиваем пределами экрана
+            newX = Math.max(0, Math.min(newX, window.innerWidth - 60));
+            newY = Math.max(0, Math.min(newY, window.innerHeight - 60));
+
+            button.style.left = newX + 'px';
+            button.style.top = newY + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                button.classList.remove('dragging');
+
+                // Сохраняем позицию
+                localStorage.setItem('catalog_button_position', JSON.stringify({
+                    x: button.offsetLeft,
+                    y: button.offsetTop
+                }));
+
+                // Если не двигали - открываем модалку
+                if (!hasMoved) {
+                    openCatalogModal();
+                }
+            }
+        });
+
         document.body.appendChild(button);
     }
 
@@ -129,7 +249,7 @@
             align-items: center;
         `;
         header.innerHTML = `
-            <h2 style="margin: 0; font-size: 20px;">🌸 Выберите букеты для отправки</h2>
+            <h2 style="margin: 0; font-size: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Выберите букеты для отправки</h2>
             <button id="close-modal-btn" style="
                 background: transparent;
                 border: none;
@@ -443,7 +563,7 @@
         const addBtn = document.createElement('button');
         addBtn.id = 'add-category-btn';
         addBtn.textContent = '➕ Добавить категорию';
-        addBtn.style.cssText = 'width: 100%; padding: 10px; background: linear-gradient(135deg, #FF6B9D 0%, #C06C84 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px;';
+        addBtn.style.cssText = 'width: 100%; padding: 10px; background: linear-gradient(135deg, #FF6B9D 0%, #C06C84 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
         addBtn.onclick = (e) => {
             e.stopPropagation();
             openCategoryEditor();
@@ -451,7 +571,7 @@
         
         const exportBtn = document.createElement('button');
         exportBtn.textContent = '📥 Экспортировать категории';
-        exportBtn.style.cssText = 'width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px;';
+        exportBtn.style.cssText = 'width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
         exportBtn.onclick = (e) => {
             e.stopPropagation();
             exportCategories();
@@ -459,7 +579,7 @@
         
         const importBtn = document.createElement('button');
         importBtn.textContent = '📤 Импортировать категории';
-        importBtn.style.cssText = 'width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px;';
+        importBtn.style.cssText = 'width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
         importBtn.onclick = (e) => {
             e.stopPropagation();
             importCategories();
@@ -467,98 +587,16 @@
         
         const refreshBtn = document.createElement('button');
         refreshBtn.textContent = '🔄 Обновить каталог';
-        refreshBtn.style.cssText = 'width: 100%; padding: 10px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px;';
+        refreshBtn.style.cssText = 'width: 100%; padding: 10px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
         refreshBtn.onclick = (e) => {
             e.stopPropagation();
             refreshCatalog();
         };
 
-        // Секция настройки URL фида
-        const feedSettingsSection = document.createElement('div');
-        feedSettingsSection.style.cssText = 'margin-top: 15px; padding-top: 15px; border-top: 2px solid #e0e0e0;';
-
-        const feedLabel = document.createElement('label');
-        feedLabel.textContent = '⚙️ URL YML-фида:';
-        feedLabel.style.cssText = 'display: block; font-weight: 600; color: #333; margin-bottom: 8px; font-size: 13px;';
-
-        const feedInput = document.createElement('input');
-        feedInput.type = 'text';
-        feedInput.id = 'yml-feed-url-input';
-        feedInput.value = getFeedUrl();
-        feedInput.placeholder = 'Введите URL YML-фида...';
-        feedInput.style.cssText = 'width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; margin-bottom: 8px; box-sizing: border-box;';
-        feedInput.onclick = (e) => e.stopPropagation();
-
-        const saveFeedBtn = document.createElement('button');
-        saveFeedBtn.textContent = '💾 Сохранить и обновить';
-        saveFeedBtn.style.cssText = 'width: 100%; padding: 10px; background: #9C27B0; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600;';
-        saveFeedBtn.onclick = async (e) => {
-            e.stopPropagation();
-            const newUrl = feedInput.value.trim();
-
-            if (!newUrl) {
-                alert('Введите URL YML-фида');
-                return;
-            }
-
-            if (!newUrl.endsWith('.yml') && !newUrl.endsWith('.xml')) {
-                if (!confirm('URL не заканчивается на .yml или .xml. Продолжить?')) {
-                    return;
-                }
-            }
-
-            saveFeedUrl(newUrl);
-
-            // Очищаем кэш и обновляем каталог
-            localStorage.removeItem('orange_tilda_catalog');
-            localStorage.removeItem('orange_tilda_catalog_timestamp');
-
-            showNotification('🔄 Загрузка каталога из нового фида...', 'info');
-
-            const dropdown = document.getElementById('custom-category-dropdown');
-            if (dropdown) dropdown.style.display = 'none';
-
-            try {
-                const products = await loadYMLFeed();
-
-                if (products && products.length > 0) {
-                    productsCache = products;
-                    saveCatalogToCache(products);
-                    renderGallery(products);
-                    showNotification(`✅ Загружено ${products.length} ${pluralize(products.length, 'товар', 'товара', 'товаров')} из нового фида!`, 'success');
-                } else {
-                    showNotification('⚠️ Фид пуст или не содержит товаров', 'error');
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки фида:', error);
-                showNotification('❌ Ошибка: ' + error.message, 'error');
-            }
-        };
-
-        const resetFeedBtn = document.createElement('button');
-        resetFeedBtn.textContent = '🔄 Сбросить на стандартный';
-        resetFeedBtn.style.cssText = 'width: 100%; padding: 8px; background: #607D8B; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 5px;';
-        resetFeedBtn.onclick = (e) => {
-            e.stopPropagation();
-            if (confirm('Сбросить URL фида на стандартный и очистить кэш?')) {
-                localStorage.removeItem('orange_yml_feed_url');
-                localStorage.removeItem('orange_tilda_catalog');
-                localStorage.removeItem('orange_tilda_catalog_timestamp');
-                feedInput.value = DEFAULT_YML_FEED_URL;
-                showNotification('✅ Настройки сброшены. Обновите страницу (F5)', 'success');
-            }
-        };
-
-        feedSettingsSection.appendChild(feedLabel);
-        feedSettingsSection.appendChild(feedInput);
-        feedSettingsSection.appendChild(saveFeedBtn);
-        feedSettingsSection.appendChild(resetFeedBtn);
-
         dropdown.appendChild(addBtn);
         dropdown.appendChild(exportBtn);
         dropdown.appendChild(importBtn);
         dropdown.appendChild(refreshBtn);
-        dropdown.appendChild(feedSettingsSection);
     }
     
     function loadCategoryProducts(index) {
@@ -1303,10 +1341,10 @@
             
             if (cached && timestamp) {
                 const age = Date.now() - parseInt(timestamp);
-                const maxAge = 24 * 60 * 60 * 1000;
-                
+                const maxAge = 1 * 60 * 60 * 1000; // 1 час
+
                 if (age < maxAge) {
-                    console.log(`Каталог загружен из кэша (возраст: ${Math.floor(age / 3600000)} часов)`);
+                    console.log(`Каталог загружен из кэша (возраст: ${Math.floor(age / 60000)} минут)`);
                     return JSON.parse(cached);
                 }
                 console.log('Кэш устарел, требуется обновление');
@@ -1506,6 +1544,7 @@
             z-index: 10002;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             font-size: 14px;
+            font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
             animation: slideIn 0.3s ease-out;
         `;
 
