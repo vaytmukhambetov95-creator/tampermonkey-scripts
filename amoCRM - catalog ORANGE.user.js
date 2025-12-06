@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.2.1
+// @version      9.2.2
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -120,6 +120,8 @@
             align-items: center;
             justify-content: center;
             font-size: 32px;
+            line-height: 1;
+            text-align: center;
         `;
 
         // Drag & Drop функционал
@@ -250,13 +252,13 @@
         `;
         filters.innerHTML = `
             <input type="text" id="filter-search" placeholder="Поиск по названию..."
-                style="flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+                style="flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px; font-weight: 600;">
 
             <input type="number" id="filter-price-min" placeholder="Цена от..."
-                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px; font-weight: 600;">
 
             <input type="number" id="filter-price-max" placeholder="Цена до..."
-                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px; font-weight: 600;">
 
             <div style="position: relative;">
                 <button id="custom-category-btn" style="
@@ -289,6 +291,7 @@
                     overflow-y: auto;
                     z-index: 10001;
                     font-family: ${FONT_FAMILY};
+                    font-weight: 600;
                 "></div>
             </div>
 
@@ -301,6 +304,7 @@
                 cursor: pointer;
                 font-size: 14px;
                 font-family: ${FONT_FAMILY};
+                font-weight: 600;
             ">Сбросить</button>
         `;
 
@@ -332,7 +336,7 @@
             align-items: center;
         `;
         footer.innerHTML = `
-            <div id="selected-count" style="font-size: 14px; color: #666; font-family: ${FONT_FAMILY};">
+            <div id="selected-count" style="font-size: 14px; color: #666; font-family: ${FONT_FAMILY}; font-weight: 600;">
                 Выбрано: <strong>0</strong> товаров
             </div>
             <div style="display: flex; gap: 10px;">
@@ -345,6 +349,7 @@
                     cursor: pointer;
                     font-size: 14px;
                     font-family: ${FONT_FAMILY};
+                    font-weight: 600;
                 ">Отмена</button>
                 <button id="send-selected-btn" style="
                     padding: 10px 30px;
@@ -354,7 +359,7 @@
                     border-radius: 6px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
+                    font-weight: 600;
                     font-family: ${FONT_FAMILY};
                 ">Отправить в чат</button>
             </div>
@@ -390,7 +395,7 @@
         gallery.innerHTML = '';
 
         if (products.length === 0) {
-            gallery.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: #999; padding: 40px; font-family: ${FONT_FAMILY};">Товары не найдены</p>`;
+            gallery.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: #999; padding: 40px; font-family: ${FONT_FAMILY}; font-weight: 600;">Товары не найдены</p>`;
             return;
         }
 
@@ -414,10 +419,10 @@
                            data-product-id="${product.id}"
                            style="position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; cursor: pointer; z-index: 2; accent-color: #FF6B9D;">
                 </div>
-                <div style="padding: 15px; font-family: ${FONT_FAMILY};">
+                <div style="padding: 15px; font-family: ${FONT_FAMILY}; font-weight: 600;">
                     <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #333; line-height: 1.3; font-weight: 600; font-family: ${FONT_FAMILY};">${product.title}</h3>
-                    <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: bold; color: #FF6B9D; font-family: ${FONT_FAMILY};">${product.price.toLocaleString('ru-RU')} ₽</p>
-                    <p style="margin: 0; font-size: 12px; color: #666; line-height: 1.4; font-family: ${FONT_FAMILY};">${product.description || ''}</p>
+                    <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: 600; color: #FF6B9D; font-family: ${FONT_FAMILY};">${product.price.toLocaleString('ru-RU')} ₽</p>
+                    <p style="margin: 0; font-size: 12px; color: #666; line-height: 1.4; font-family: ${FONT_FAMILY}; font-weight: 600;">${product.description || ''}</p>
                 </div>
             `;
 
