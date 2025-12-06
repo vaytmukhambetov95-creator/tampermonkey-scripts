@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.0.0
+// @version      9.1.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -46,20 +46,14 @@
     let selectedProducts = new Set();
     let currentCategoryEdit = null;
 
-    // SVG иконка цветка
+    // SVG иконка цветка (5 лепестков - сакура)
     const FLOWER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
-        <g fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M32 48 L32 58"/>
-            <path d="M28 52 Q24 50 22 54"/>
-            <path d="M36 52 Q40 50 42 54"/>
-            <path d="M32 48 C32 48 24 44 22 36 C20 28 24 22 32 22 C40 22 44 28 42 36 C40 44 32 48 32 48"/>
-            <path d="M32 22 C32 18 28 14 24 16 C20 18 20 24 24 26"/>
-            <path d="M32 22 C32 18 36 14 40 16 C44 18 44 24 40 26"/>
-            <path d="M24 26 C20 24 14 24 14 30 C14 36 20 36 24 34"/>
-            <path d="M40 26 C44 24 50 24 50 30 C50 36 44 36 40 34"/>
-            <path d="M24 34 C20 36 18 42 24 46 C28 48 32 48 32 48"/>
-            <path d="M40 34 C44 36 46 42 40 46 C36 48 32 48 32 48"/>
-        </g>
+        <path d="M32 6 C36 6 42 12 42 18 C42 22 40 25 37 27 L32 32 L27 27 C24 25 22 22 22 18 C22 12 28 6 32 6 Z" fill="none" stroke="white" stroke-width="2.5"/>
+        <path d="M54 24 C54 28 50 34 44 36 C40 37 36 36 34 34 L32 32 L36 27 C38 25 42 23 46 23 C50 23 54 20 54 24 Z" fill="none" stroke="white" stroke-width="2.5"/>
+        <path d="M48 50 C45 53 39 55 34 52 C30 50 28 46 29 43 L32 32 L37 34 C40 36 43 40 44 44 C45 48 51 47 48 50 Z" fill="none" stroke="white" stroke-width="2.5"/>
+        <path d="M16 50 C19 53 25 55 30 52 C34 50 36 46 35 43 L32 32 L27 34 C24 36 21 40 20 44 C19 48 13 47 16 50 Z" fill="none" stroke="white" stroke-width="2.5"/>
+        <path d="M10 24 C10 28 14 34 20 36 C24 37 28 36 30 34 L32 32 L28 27 C26 25 22 23 18 23 C14 23 10 20 10 24 Z" fill="none" stroke="white" stroke-width="2.5"/>
+        <circle cx="32" cy="32" r="5" fill="white"/>
     </svg>`;
 
     function createMainButton() {
@@ -70,40 +64,37 @@
             const style = document.createElement('style');
             style.id = 'catalog-button-styles';
             style.textContent = `
-                @keyframes shimmer {
-                    0% { background-position: -200% center; }
-                    100% { background-position: 200% center; }
-                }
-                @keyframes pulse-glow {
-                    0%, 100% { box-shadow: 0 4px 20px rgba(255, 105, 180, 0.4); }
-                    50% { box-shadow: 0 4px 30px rgba(255, 105, 180, 0.7); }
+                @keyframes wave-ripple {
+                    0% {
+                        box-shadow: 0 0 0 0 rgba(255, 105, 180, 0.6),
+                                    0 0 0 0 rgba(255, 105, 180, 0.4),
+                                    0 0 0 0 rgba(255, 105, 180, 0.2);
+                    }
+                    100% {
+                        box-shadow: 0 0 0 10px rgba(255, 105, 180, 0),
+                                    0 0 0 20px rgba(255, 105, 180, 0),
+                                    0 0 0 30px rgba(255, 105, 180, 0);
+                    }
                 }
                 #tilda-catalog-main-btn {
-                    background: linear-gradient(
-                        90deg,
-                        #FF69B4 0%,
-                        #FF85C8 25%,
-                        #FFB8D9 50%,
-                        #FF85C8 75%,
-                        #FF69B4 100%
-                    );
-                    background-size: 200% auto;
-                    animation: shimmer 3s linear infinite, pulse-glow 2s ease-in-out infinite;
+                    background: linear-gradient(135deg, #FF69B4 0%, #FF85C8 50%, #FF69B4 100%);
+                    animation: wave-ripple 2s ease-out infinite;
+                    cursor: pointer;
                 }
                 #tilda-catalog-main-btn:hover {
-                    animation: shimmer 1.5s linear infinite, pulse-glow 1s ease-in-out infinite;
                     transform: scale(1.1);
+                    animation: wave-ripple 1s ease-out infinite;
                 }
                 #tilda-catalog-main-btn.dragging {
-                    cursor: grabbing !important;
+                    cursor: move !important;
                     opacity: 0.9;
                     transform: scale(1.05);
                 }
                 #tilda-catalog-overlay, #tilda-catalog-overlay * {
-                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
+                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif !important;
                 }
                 #category-editor-overlay, #category-editor-overlay * {
-                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
+                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif !important;
                 }
             `;
             document.head.appendChild(style);
@@ -136,7 +127,6 @@
             padding: 0;
             border: none;
             border-radius: 50%;
-            cursor: grab;
             z-index: 9998;
             display: flex;
             align-items: center;
