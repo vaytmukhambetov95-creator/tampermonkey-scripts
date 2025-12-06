@@ -6,6 +6,8 @@
 // @author       Вы
 // @match        https://*.amocrm.ru/*
 // @match        https://*.kommo.com/*
+// @updateURL    https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
+// @downloadURL  https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
 // @grant        GM.xmlHttpRequest
 // @connect      orangesmr.ru
 // @connect      static.tildacdn.com
