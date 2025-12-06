@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.1.0
+// @version      9.2.1
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -46,49 +46,37 @@
     let selectedProducts = new Set();
     let currentCategoryEdit = null;
 
-    // SVG иконка цветка (5 лепестков - сакура)
-    const FLOWER_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
-        <path d="M32 6 C36 6 42 12 42 18 C42 22 40 25 37 27 L32 32 L27 27 C24 25 22 22 22 18 C22 12 28 6 32 6 Z" fill="none" stroke="white" stroke-width="2.5"/>
-        <path d="M54 24 C54 28 50 34 44 36 C40 37 36 36 34 34 L32 32 L36 27 C38 25 42 23 46 23 C50 23 54 20 54 24 Z" fill="none" stroke="white" stroke-width="2.5"/>
-        <path d="M48 50 C45 53 39 55 34 52 C30 50 28 46 29 43 L32 32 L37 34 C40 36 43 40 44 44 C45 48 51 47 48 50 Z" fill="none" stroke="white" stroke-width="2.5"/>
-        <path d="M16 50 C19 53 25 55 30 52 C34 50 36 46 35 43 L32 32 L27 34 C24 36 21 40 20 44 C19 48 13 47 16 50 Z" fill="none" stroke="white" stroke-width="2.5"/>
-        <path d="M10 24 C10 28 14 34 20 36 C24 37 28 36 30 34 L32 32 L28 27 C26 25 22 23 18 23 C14 23 10 20 10 24 Z" fill="none" stroke="white" stroke-width="2.5"/>
-        <circle cx="32" cy="32" r="5" fill="white"/>
-    </svg>`;
+    // Эмодзи сакуры для кнопки
+    const FLOWER_ICON = '🌸';
+
+    // Единый шрифт для всего интерфейса
+    const FONT_FAMILY = '"Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif';
 
     function createMainButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
 
-        // Добавляем CSS анимацию перелива
+        // Добавляем CSS стили
         if (!document.getElementById('catalog-button-styles')) {
             const style = document.createElement('style');
             style.id = 'catalog-button-styles';
             style.textContent = `
-                @keyframes wave-ripple {
-                    0% {
-                        box-shadow: 0 0 0 0 rgba(255, 105, 180, 0.6),
-                                    0 0 0 0 rgba(255, 105, 180, 0.4),
-                                    0 0 0 0 rgba(255, 105, 180, 0.2);
-                    }
-                    100% {
-                        box-shadow: 0 0 0 10px rgba(255, 105, 180, 0),
-                                    0 0 0 20px rgba(255, 105, 180, 0),
-                                    0 0 0 30px rgba(255, 105, 180, 0);
-                    }
-                }
                 #tilda-catalog-main-btn {
                     background: linear-gradient(135deg, #FF69B4 0%, #FF85C8 50%, #FF69B4 100%);
-                    animation: wave-ripple 2s ease-out infinite;
+                    box-shadow: 0 4px 15px rgba(255, 105, 180, 0.4);
                     cursor: pointer;
+                    transition: all 0.2s ease;
                 }
                 #tilda-catalog-main-btn:hover {
-                    transform: scale(1.1);
-                    animation: wave-ripple 1s ease-out infinite;
+                    transform: scale(0.95);
+                    box-shadow: 0 2px 10px rgba(255, 105, 180, 0.5);
+                }
+                #tilda-catalog-main-btn:active {
+                    transform: scale(0.9);
                 }
                 #tilda-catalog-main-btn.dragging {
                     cursor: move !important;
                     opacity: 0.9;
-                    transform: scale(1.05);
+                    transform: scale(1);
                 }
                 #tilda-catalog-overlay, #tilda-catalog-overlay * {
                     font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif !important;
@@ -102,7 +90,7 @@
 
         const button = document.createElement('button');
         button.id = 'tilda-catalog-main-btn';
-        button.innerHTML = FLOWER_ICON_SVG;
+        button.innerHTML = FLOWER_ICON;
         button.title = 'Каталог Orange';
 
         // Загружаем сохранённую позицию или используем дефолтную
@@ -131,7 +119,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: transform 0.2s ease;
+            font-size: 32px;
         `;
 
         // Drag & Drop функционал
@@ -262,14 +250,14 @@
         `;
         filters.innerHTML = `
             <input type="text" id="filter-search" placeholder="Поиск по названию..."
-                style="flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
-            
+                style="flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+
             <input type="number" id="filter-price-min" placeholder="Цена от..."
-                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
-            
+                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+
             <input type="number" id="filter-price-max" placeholder="Цена до..."
-                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
-            
+                style="width: 120px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: ${FONT_FAMILY}; font-size: 14px;">
+
             <div style="position: relative;">
                 <button id="custom-category-btn" style="
                     padding: 8px 16px;
@@ -283,6 +271,7 @@
                     align-items: center;
                     gap: 5px;
                     font-weight: 600;
+                    font-family: ${FONT_FAMILY};
                 ">📁 Мои категории <span style="font-size: 10px;">▼</span></button>
                 <div id="custom-category-dropdown" style="
                     display: none;
@@ -299,9 +288,10 @@
                     max-height: 400px;
                     overflow-y: auto;
                     z-index: 10001;
+                    font-family: ${FONT_FAMILY};
                 "></div>
             </div>
-            
+
             <button id="reset-filter-btn" style="
                 padding: 8px 20px;
                 background: #999;
@@ -310,6 +300,7 @@
                 border-radius: 4px;
                 cursor: pointer;
                 font-size: 14px;
+                font-family: ${FONT_FAMILY};
             ">Сбросить</button>
         `;
 
@@ -341,7 +332,7 @@
             align-items: center;
         `;
         footer.innerHTML = `
-            <div id="selected-count" style="font-size: 14px; color: #666;">
+            <div id="selected-count" style="font-size: 14px; color: #666; font-family: ${FONT_FAMILY};">
                 Выбрано: <strong>0</strong> товаров
             </div>
             <div style="display: flex; gap: 10px;">
@@ -353,6 +344,7 @@
                     border-radius: 6px;
                     cursor: pointer;
                     font-size: 14px;
+                    font-family: ${FONT_FAMILY};
                 ">Отмена</button>
                 <button id="send-selected-btn" style="
                     padding: 10px 30px;
@@ -363,6 +355,7 @@
                     cursor: pointer;
                     font-size: 14px;
                     font-weight: bold;
+                    font-family: ${FONT_FAMILY};
                 ">Отправить в чат</button>
             </div>
         `;
@@ -397,7 +390,7 @@
         gallery.innerHTML = '';
 
         if (products.length === 0) {
-            gallery.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #999; padding: 40px;">Товары не найдены</p>';
+            gallery.innerHTML = `<p style="grid-column: 1/-1; text-align: center; color: #999; padding: 40px; font-family: ${FONT_FAMILY};">Товары не найдены</p>`;
             return;
         }
 
@@ -421,10 +414,10 @@
                            data-product-id="${product.id}"
                            style="position: absolute; top: 10px; right: 10px; width: 24px; height: 24px; cursor: pointer; z-index: 2; accent-color: #FF6B9D;">
                 </div>
-                <div style="padding: 15px;">
-                    <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #333; line-height: 1.3; font-weight: 600;">${product.title}</h3>
-                    <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: bold; color: #FF6B9D;">${product.price.toLocaleString('ru-RU')} ₽</p>
-                    <p style="margin: 0; font-size: 12px; color: #666; line-height: 1.4;">${product.description || ''}</p>
+                <div style="padding: 15px; font-family: ${FONT_FAMILY};">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #333; line-height: 1.3; font-weight: 600; font-family: ${FONT_FAMILY};">${product.title}</h3>
+                    <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: bold; color: #FF6B9D; font-family: ${FONT_FAMILY};">${product.price.toLocaleString('ru-RU')} ₽</p>
+                    <p style="margin: 0; font-size: 12px; color: #666; line-height: 1.4; font-family: ${FONT_FAMILY};">${product.description || ''}</p>
                 </div>
             `;
 
