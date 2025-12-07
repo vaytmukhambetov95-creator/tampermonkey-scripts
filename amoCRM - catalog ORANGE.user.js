@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.2.2
+// @version      9.3.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -46,11 +46,8 @@
     let selectedProducts = new Set();
     let currentCategoryEdit = null;
 
-    // Эмодзи сакуры для кнопки
-    const FLOWER_ICON = '🌸';
-
-    // Единый шрифт для всего интерфейса
-    const FONT_FAMILY = '"Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif';
+    // Единый шрифт для всего интерфейса - стандартный жирный
+    const FONT_FAMILY = 'Arial, Helvetica, sans-serif';
 
     function createMainButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
@@ -64,45 +61,42 @@
                     background: linear-gradient(135deg, #FF69B4 0%, #FF85C8 50%, #FF69B4 100%);
                     box-shadow: 0 4px 15px rgba(255, 105, 180, 0.4);
                     cursor: pointer;
-                    transition: all 0.2s ease;
                 }
                 #tilda-catalog-main-btn:hover {
-                    transform: scale(0.95);
                     box-shadow: 0 2px 10px rgba(255, 105, 180, 0.5);
-                }
-                #tilda-catalog-main-btn:active {
-                    transform: scale(0.9);
                 }
                 #tilda-catalog-main-btn.dragging {
                     cursor: move !important;
                     opacity: 0.9;
-                    transform: scale(1);
                 }
                 #tilda-catalog-overlay, #tilda-catalog-overlay * {
-                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif !important;
+                    font-family: Arial, Helvetica, sans-serif !important;
                 }
                 #category-editor-overlay, #category-editor-overlay * {
-                    font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif !important;
+                    font-family: Arial, Helvetica, sans-serif !important;
                 }
             `;
             document.head.appendChild(style);
         }
 
+        // Проверяем, не существует ли уже кнопка
+        if (document.getElementById('tilda-catalog-main-btn')) return;
+
         const button = document.createElement('button');
         button.id = 'tilda-catalog-main-btn';
-        button.innerHTML = FLOWER_ICON;
+        button.textContent = 'Каталог';
         button.title = 'Каталог Orange';
 
         // Загружаем сохранённую позицию или используем дефолтную
         const savedPosition = localStorage.getItem('catalog_button_position');
-        let posX = window.innerWidth - 80;
-        let posY = window.innerHeight - 160;
+        let posX = window.innerWidth - 120;
+        let posY = window.innerHeight - 80;
 
         if (savedPosition) {
             try {
                 const pos = JSON.parse(savedPosition);
-                posX = Math.min(pos.x, window.innerWidth - 60);
-                posY = Math.min(pos.y, window.innerHeight - 60);
+                posX = Math.min(pos.x, window.innerWidth - 100);
+                posY = Math.min(pos.y, window.innerHeight - 40);
             } catch (e) {}
         }
 
@@ -110,18 +104,18 @@
             position: fixed;
             left: ${posX}px;
             top: ${posY}px;
-            width: 60px;
-            height: 60px;
-            padding: 0;
+            padding: 12px 20px;
             border: none;
-            border-radius: 50%;
+            border-radius: 10px;
             z-index: 9998;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 32px;
-            line-height: 1;
-            text-align: center;
+            font-size: 14px;
+            font-weight: bold;
+            font-family: Arial, Helvetica, sans-serif;
+            color: white;
+            white-space: nowrap;
         `;
 
         // Drag & Drop функционал
@@ -129,18 +123,7 @@
         let startX, startY, initialX, initialY;
         let hasMoved = false;
 
-        button.onmousedown = (e) => {
-            isDragging = true;
-            hasMoved = false;
-            startX = e.clientX;
-            startY = e.clientY;
-            initialX = button.offsetLeft;
-            initialY = button.offsetTop;
-            button.classList.add('dragging');
-            e.preventDefault();
-        };
-
-        document.addEventListener('mousemove', (e) => {
+        const onMouseMove = (e) => {
             if (!isDragging) return;
 
             const deltaX = e.clientX - startX;
@@ -154,17 +137,22 @@
             let newY = initialY + deltaY;
 
             // Ограничиваем пределами экрана
-            newX = Math.max(0, Math.min(newX, window.innerWidth - 60));
-            newY = Math.max(0, Math.min(newY, window.innerHeight - 60));
+            const btnWidth = button.offsetWidth || 100;
+            const btnHeight = button.offsetHeight || 40;
+            newX = Math.max(0, Math.min(newX, window.innerWidth - btnWidth));
+            newY = Math.max(0, Math.min(newY, window.innerHeight - btnHeight));
 
             button.style.left = newX + 'px';
             button.style.top = newY + 'px';
-        });
+        };
 
-        document.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             if (isDragging) {
                 isDragging = false;
                 button.classList.remove('dragging');
+
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
 
                 // Сохраняем позицию
                 localStorage.setItem('catalog_button_position', JSON.stringify({
@@ -177,7 +165,21 @@
                     openCatalogModal();
                 }
             }
-        });
+        };
+
+        button.onmousedown = (e) => {
+            isDragging = true;
+            hasMoved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialX = button.offsetLeft;
+            initialY = button.offsetTop;
+            button.classList.add('dragging');
+            e.preventDefault();
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
 
         document.body.appendChild(button);
     }
@@ -229,7 +231,7 @@
             align-items: center;
         `;
         header.innerHTML = `
-            <h2 style="margin: 0; font-size: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Выберите букеты для отправки</h2>
+            <h2 style="margin: 0; font-size: 20px; font-weight: bold; font-family: Arial, Helvetica, sans-serif;">Выберите букеты для отправки</h2>
             <button id="close-modal-btn" style="
                 background: transparent;
                 border: none;
@@ -551,7 +553,7 @@
         const addBtn = document.createElement('button');
         addBtn.id = 'add-category-btn';
         addBtn.textContent = '➕ Добавить категорию';
-        addBtn.style.cssText = 'width: 100%; padding: 10px; background: linear-gradient(135deg, #FF6B9D 0%, #C06C84 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
+        addBtn.style.cssText = 'width: 100%; padding: 10px; background: linear-gradient(135deg, #FF6B9D 0%, #C06C84 100%); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 10px; font-family: Arial, Helvetica, sans-serif;';
         addBtn.onclick = (e) => {
             e.stopPropagation();
             openCategoryEditor();
@@ -559,7 +561,7 @@
         
         const exportBtn = document.createElement('button');
         exportBtn.textContent = '📥 Экспортировать категории';
-        exportBtn.style.cssText = 'width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
+        exportBtn.style.cssText = 'width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 5px; font-family: Arial, Helvetica, sans-serif;';
         exportBtn.onclick = (e) => {
             e.stopPropagation();
             exportCategories();
@@ -567,7 +569,7 @@
         
         const importBtn = document.createElement('button');
         importBtn.textContent = '📤 Импортировать категории';
-        importBtn.style.cssText = 'width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 5px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
+        importBtn.style.cssText = 'width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 5px; font-family: Arial, Helvetica, sans-serif;';
         importBtn.onclick = (e) => {
             e.stopPropagation();
             importCategories();
@@ -575,7 +577,7 @@
         
         const refreshBtn = document.createElement('button');
         refreshBtn.textContent = '🔄 Обновить каталог';
-        refreshBtn.style.cssText = 'width: 100%; padding: 10px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px; font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;';
+        refreshBtn.style.cssText = 'width: 100%; padding: 10px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 10px; font-family: Arial, Helvetica, sans-serif;';
         refreshBtn.onclick = (e) => {
             e.stopPropagation();
             refreshCatalog();
@@ -960,13 +962,13 @@
                 const priceY = deliveryY - deliveryFontSize - padding * 0.6;
                 const titleY = priceY - priceFontSize - padding * 0.6;
                 
-                ctx.font = `600 ${titleFontSize}px "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif`;
+                ctx.font = `bold ${titleFontSize}px Arial, Helvetica, sans-serif`;
                 ctx.fillText(title, titleX, titleY);
-                
-                ctx.font = `800 ${priceFontSize}px "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif`;
+
+                ctx.font = `bold ${priceFontSize}px Arial, Helvetica, sans-serif`;
                 ctx.fillText(price, titleX, priceY);
-                
-                ctx.font = `600 ${deliveryFontSize}px "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif`;
+
+                ctx.font = `bold ${deliveryFontSize}px Arial, Helvetica, sans-serif`;
                 ctx.fillText(delivery, titleX, deliveryY);
                 
                 URL.revokeObjectURL(url);
@@ -1532,7 +1534,8 @@
             z-index: 10002;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             font-size: 14px;
-            font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
+            font-weight: bold;
+            font-family: Arial, Helvetica, sans-serif;
             animation: slideIn 0.3s ease-out;
         `;
 
