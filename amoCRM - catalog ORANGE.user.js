@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.8.0
+// @version      9.8.1
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -18,7 +18,7 @@
     'use strict';
 
     const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/66dc84e275574e304f6e3711a1aff17e.yml';
-    const SCRIPT_VERSION = '9.8.0';
+    const SCRIPT_VERSION = '9.8.1';
 
     // Сбрасываем кэш при обновлении версии скрипта
     (function checkVersionUpdate() {
@@ -1514,17 +1514,20 @@
     
     function cleanProductTitle(title) {
         let cleanTitle = title;
-        
-        cleanTitle = cleanTitle.replace(/\s*-\s*Как на фото\s*/gi, '');
+
+        // Убираем "Как на фото" в разных форматах (с дефисом, слэшем или без)
+        cleanTitle = cleanTitle.replace(/\s*[\/\-]\s*Как на фото\s*/gi, '');
+        cleanTitle = cleanTitle.replace(/\s*Как на фото\s*/gi, '');
+
         cleanTitle = cleanTitle.replace(/\s*-?\s*Роскошный\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
         cleanTitle = cleanTitle.replace(/\s*-?\s*VIP\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
         cleanTitle = cleanTitle.replace(/\s*-?\s*Вы наш герой\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
         cleanTitle = cleanTitle.replace(/\s*-\s*Роскошный\s*/gi, '');
         cleanTitle = cleanTitle.replace(/\s*-\s*VIP\s*/gi, '');
         cleanTitle = cleanTitle.replace(/\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
-        
+
         cleanTitle = cleanTitle.trim();
-        
+
         return cleanTitle;
     }
 
