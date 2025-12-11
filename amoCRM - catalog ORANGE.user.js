@@ -18,6 +18,19 @@
     'use strict';
 
     const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/66dc84e275574e304f6e3711a1aff17e.yml';
+    const SCRIPT_VERSION = '9.8.0';
+
+    // Сбрасываем кэш при обновлении версии скрипта
+    (function checkVersionUpdate() {
+        const savedVersion = localStorage.getItem('orange_catalog_version');
+        if (savedVersion !== SCRIPT_VERSION) {
+            console.log(`🔄 Обновление версии ${savedVersion} → ${SCRIPT_VERSION}, сбрасываем кэш...`);
+            localStorage.removeItem('orange_yml_feed_url');
+            localStorage.removeItem('orange_tilda_catalog');
+            localStorage.removeItem('orange_tilda_catalog_timestamp');
+            localStorage.setItem('orange_catalog_version', SCRIPT_VERSION);
+        }
+    })();
 
     let productsCache = [];
 
