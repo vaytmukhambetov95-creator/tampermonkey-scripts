@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.6.0
+// @version      9.7.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -1419,14 +1419,16 @@
         offers.forEach((offer) => {
             try {
                 const nameEl = offer.querySelector('name');
+                const vendorCodeEl = offer.querySelector('vendorCode');  // Короткое название товара
                 const priceEl = offer.querySelector('price');
                 const pictureEl = offer.querySelector('picture');
                 const descriptionEl = offer.querySelector('description');
                 const urlEl = offer.querySelector('url');
-                
+
                 if (nameEl && priceEl) {
                     const groupId = offer.getAttribute('group_id');
-                    const rawTitle = nameEl.textContent.trim();
+                    // Берём название из vendorCode (короткое), если нет - из name
+                    const rawTitle = (vendorCodeEl && vendorCodeEl.textContent.trim()) || nameEl.textContent.trim();
                     const price = parseFloat(priceEl.textContent) || 0;
                     const image = pictureEl ? pictureEl.textContent.trim() : '';
                     const description = descriptionEl ? descriptionEl.textContent.trim().replace(/<[^>]+>/g, '').substring(0, 200) : rawTitle;
