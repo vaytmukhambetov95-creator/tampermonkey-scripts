@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.7.0
+// @version      9.8.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/adae69da26e436156105a79fa2146cec.yml';
+    const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/66dc84e275574e304f6e3711a1aff17e.yml';
 
     let productsCache = [];
 
