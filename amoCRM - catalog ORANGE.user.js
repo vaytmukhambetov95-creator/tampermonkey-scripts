@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange (YML)
 // @namespace    http://tampermonkey.net/
-// @version      9.3.0
+// @version      9.4.0
 // @description  Загрузка каталога через настраиваемый YML-фид с пользовательскими категориями и отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -1265,7 +1265,7 @@
             
             grid.querySelectorAll('[data-product-id]').forEach(card => {
                 card.onclick = () => {
-                    const productId = parseInt(card.dataset.productId);
+                    const productId = card.dataset.productId;  // Строковый ID, не парсим в число
                     if (selectedProductIds.has(productId)) {
                         selectedProductIds.delete(productId);
                     } else {
@@ -1480,8 +1480,9 @@
             }
         });
         
-        const products = Array.from(groupedProducts.values()).map((product, index) => ({
-            id: index + 1,
+        // Используем стабильные ID из YML (group_id или offer_id) вместо индекса
+        const products = Array.from(groupedProducts.entries()).map(([key, product]) => ({
+            id: key,  // Стабильный ID из YML-фида
             title: product.title,
             price: product.price,
             image: product.image,
@@ -1489,10 +1490,11 @@
             url: product.url,
             category: product.category
         }));
-        
+
         console.log(`После удаления дублей осталось ${products.length} товаров`);
-        
-        return products.reverse();
+
+        // Сортируем по названию для стабильного порядка отображения
+        return products.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
     }
     
     function cleanProductTitle(title) {
