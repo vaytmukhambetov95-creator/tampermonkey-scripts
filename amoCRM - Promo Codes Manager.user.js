@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.2.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -3459,12 +3459,14 @@
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">⚡ Автоматические начисления (F5)</div>
                         <div id="f5-added-display" style="font-size: 28px; font-weight: bold; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="f5-added-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-f5">Транзакций: 0</div>
                     </div>
                     
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">👤 Ручные операции (Админ)</div>
                         <div id="admin-operations-display" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="admin-operations-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-admin">Транзакций: 0</div>
                     </div>
                 </div>
                 
@@ -3631,7 +3633,17 @@
         if (adminOpsRubDisplay && analyticsCache.adminOperationsRub !== undefined) {
             adminOpsRubDisplay.textContent = `${analyticsCache.adminOperationsRub.toFixed(2)} ₽`;
         }
-        
+
+        const countF5Display = document.getElementById('count-f5');
+        const countAdminDisplay = document.getElementById('count-admin');
+
+        if (countF5Display && analyticsCache.countF5 !== undefined) {
+            countF5Display.textContent = `Транзакций: ${analyticsCache.countF5}`;
+        }
+        if (countAdminDisplay && analyticsCache.countAdmin !== undefined) {
+            countAdminDisplay.textContent = `Транзакций: ${analyticsCache.countAdmin}`;
+        }
+
         const avgAddedDisplay = document.getElementById('avg-added-display');
         const avgAddedRubDisplay = document.getElementById('avg-added-rub');
         const countAddedDisplay = document.getElementById('count-added');
@@ -3673,14 +3685,56 @@
                 </div>
             `;
         }
-        
+
+        const domain = window.location.hostname;
+
         return analyticsCache.transactions.map(transaction => {
             const isAddition = transaction.type === 'начисление';
             const bgColor = isAddition ? '#e8f5e9' : '#ffebee';
             const textColor = isAddition ? '#2e7d32' : '#c62828';
             const icon = isAddition ? '➕' : '➖';
             const sourceIcon = transaction.source === 'F5' ? '⚡' : transaction.source === 'админ' ? '👤' : '📝';
-            
+
+            // Формируем ссылку на контакт
+            let contactHtml = '';
+            if (transaction.contactName || transaction.contactId) {
+                const contactName = transaction.contactName || `Контакт ${transaction.contactId}`;
+                if (transaction.contactId) {
+                    const contactUrl = `https://${domain}/contacts/detail/${transaction.contactId}`;
+                    contactHtml = `
+                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            👤 <a href="${contactUrl}" target="_blank" style="color: #FFB8D1; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#FF69B4'; this.style.textDecoration='underline'" onmouseout="this.style.color='#FFB8D1'; this.style.textDecoration='none'">${contactName}</a>
+                        </div>
+                    `;
+                } else {
+                    contactHtml = `
+                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            👤 ${contactName}
+                        </div>
+                    `;
+                }
+            }
+
+            // Формируем ссылку на сделку
+            let leadHtml = '';
+            if (transaction.leadName || transaction.leadId) {
+                const leadName = transaction.leadName || `Сделка ${transaction.leadId}`;
+                if (transaction.leadId) {
+                    const leadUrl = `https://${domain}/leads/detail/${transaction.leadId}`;
+                    leadHtml = `
+                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 3px;">
+                            💼 <a href="${leadUrl}" target="_blank" style="color: #FFB8D1; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#FF69B4'; this.style.textDecoration='underline'" onmouseout="this.style.color='#FFB8D1'; this.style.textDecoration='none'">${leadName}</a>
+                        </div>
+                    `;
+                } else {
+                    leadHtml = `
+                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 3px;">
+                            💼 ${leadName}
+                        </div>
+                    `;
+                }
+            }
+
             return `
                 <div style="background: ${bgColor}; border-left: 4px solid ${textColor}; border-radius: 8px; padding: 15px; margin-bottom: 10px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
@@ -3698,16 +3752,8 @@
                             </div>
                         </div>
                     </div>
-                    ${transaction.contactName ? `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            👤 ${transaction.contactName}
-                        </div>
-                    ` : ''}
-                    ${transaction.leadName ? `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 3px;">
-                            💼 ${transaction.leadName}
-                        </div>
-                    ` : ''}
+                    ${contactHtml}
+                    ${leadHtml}
                     ${transaction.manager ? `
                         <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 5px;">
                             Менеджер: ${transaction.manager}
