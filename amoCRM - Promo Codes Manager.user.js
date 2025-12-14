@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.3.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -24,6 +24,9 @@
     const BONUS_FIELD_ID = 2959149;
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
+
+    // URL Google Apps Script по умолчанию (можно изменить в настройках)
+    const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxfm0ub6u8oTDiDtuPKhYK_QImCliHXFhlQ4i5iVHB6zR17SF6erkl5DN85X2z828jQ/exec';
     
     let promoCodesCache = [];
     let amoCRMPromoCodes = [];
@@ -4012,7 +4015,7 @@
     }
 
     function loadSettings() {
-        webAppUrl = localStorage.getItem('promo_webapp_url') || '';
+        webAppUrl = localStorage.getItem('promo_webapp_url') || DEFAULT_WEBAPP_URL;
         isAdminAuthorized = localStorage.getItem('promo_admin_authorized') === 'true';
         const cachedPromos = getCachedPromoCodes();
         if (cachedPromos) {
