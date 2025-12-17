@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.4.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -25,9 +25,18 @@
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
 
+    // Категории причин для начисления бонусов
+    const REASON_CATEGORIES = {
+        delivery: { key: 'delivery', label: 'Проблемы с доставкой', icon: '🚚' },
+        quality: { key: 'quality', label: 'Завял букет, проблема с качеством', icon: '🌸' },
+        card: { key: 'card', label: 'Жалобы на подпись в открытке и прочие моменты', icon: '✉️' },
+        other_problems: { key: 'other_problems', label: 'Прочие проблемы', icon: '❓' },
+        custom: { key: 'custom', label: 'Другое', icon: '✏️' }
+    };
+
     // URL Google Apps Script по умолчанию (можно изменить в настройках)
-    const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxfm0ub6u8oTDiDtuPKhYK_QImCliHXFhlQ4i5iVHB6zR17SF6erkl5DN85X2z828jQ/exec';
-    
+    const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxgjarqYaSwLNQPt0jXnBp3HbFZtjbhVwJxxn0_Pfy7eIVjxbEZnHlWHlaEERZFmvUj/exec';
+
     let promoCodesCache = [];
     let amoCRMPromoCodes = [];
     let webAppUrl = '';
@@ -287,17 +296,17 @@
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:</label>
-                    <input type="text" id="promo-code-input" placeholder="Введите промокод" 
+                    <input type="text" id="promo-code-input" placeholder="Введите промокод"
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-                
+
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон клиента:</label>
-                    <input type="text" id="client-phone-input" placeholder="+7 (999) 123-45-67" 
+                    <input type="text" id="client-phone-input" placeholder="+7 (999) 123-45-67"
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     <div id="phone-hint" style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон подтягивается автоматически из карточки контакта</div>
                 </div>
-                
+
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Сумма заказа (опционально):</label>
                     <input type="number" id="order-amount-input" placeholder="5000" value="${currentLeadBudget}"
@@ -328,7 +337,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Проверить промокод</button>
-                
+
                 <div id="promo-result" style="
                     padding: 20px;
                     border-radius: 8px;
@@ -347,7 +356,7 @@
             checkBtn.style.transform = 'translateY(0)';
             checkBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-        
+
         document.getElementById('promo-code-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') checkPromoCode();
         });
@@ -437,10 +446,10 @@
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:*</label>
-                    <input type="text" id="new-promo-code" placeholder="MAMA3" 
+                    <input type="text" id="new-promo-code" placeholder="MAMA3"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; text-transform: uppercase; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-                
+
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Тип промокода:*</label>
                     <select id="new-promo-type" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -451,11 +460,11 @@
                         <option value="сотрудника">Сотрудника</option>
                     </select>
                 </div>
-                
+
                 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div>
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Скидка:*</label>
-                        <input type="number" id="new-promo-discount" placeholder="10" 
+                        <input type="number" id="new-promo-discount" placeholder="10"
                             style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     </div>
                     <div>
@@ -466,25 +475,25 @@
                         </select>
                     </div>
                 </div>
-                
+
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Минимальная сумма заказа:</label>
-                    <input type="number" id="new-promo-min-amount" placeholder="3000" 
+                    <input type="number" id="new-promo-min-amount" placeholder="3000"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-                
+
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Срок действия:</label>
-                    <input type="date" id="new-promo-expiry" 
+                    <input type="date" id="new-promo-expiry"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #333;">
                 </div>
-                
+
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Максимальное количество использований:</label>
-                    <input type="number" id="new-promo-max-usage" placeholder="100" 
+                    <input type="number" id="new-promo-max-usage" placeholder="100"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-                
+
                 <div style="margin-bottom: 15px; display: none;" id="phone-binding-block">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Привязка к телефонам:</label>
                     <div id="phone-bindings-list" style="margin-bottom: 10px;"></div>
@@ -512,13 +521,13 @@
                     </div>
                     <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Добавьте телефоны сотрудников, которым разрешено использовать этот промокод</div>
                 </div>
-                
+
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Описание:</label>
                     <textarea id="new-promo-description" placeholder="Описание промокода" rows="3"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"></textarea>
                 </div>
-                
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <button id="add-promo-google-btn" style="
                         padding: 15px;
@@ -534,7 +543,7 @@
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                         opacity: 1;
                     ">Сохранить в Google Таблицу</button>
-                    
+
                     <button id="add-promo-amocrm-btn" style="
                         padding: 15px;
                         background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
@@ -550,7 +559,7 @@
                         opacity: 1;
                     ">Сохранить в amoCRM</button>
                 </div>
-                
+
                 <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 6px; display: none;"></div>
 
                 <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
@@ -1201,9 +1210,9 @@
 
     function renderBonusTab(container) {
         loadCurrentBonusPoints();
-        
+
         const currentLeadUrl = window.location.href;
-        
+
         container.innerHTML = `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);">
@@ -1215,17 +1224,17 @@
                         ${currentContactId ? currentContactName : 'Контакт не определен'}
                     </div>
                 </div>
-                
+
                 ${isAdminAuthorized ? `
                     <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #4CAF50;">
                         <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #4CAF50; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Прямое начисление/списание (Админ)</h3>
-                        
+
                         <div style="margin-bottom: 20px;">
                             <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов:</label>
                             <input type="number" id="bonus-points-input" placeholder="100" step="0.01"
                                 style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                         </div>
-                        
+
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <button id="add-bonus-btn" style="
                                 padding: 15px;
@@ -1240,7 +1249,7 @@
                                 box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                             ">➕ Начислить</button>
-                            
+
                             <button id="subtract-bonus-btn" style="
                                 padding: 15px;
                                 background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
@@ -1255,7 +1264,7 @@
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                             ">➖ Списать</button>
                         </div>
-                        
+
                         <div id="bonus-result" style="
                             padding: 15px;
                             border-radius: 8px;
@@ -1264,22 +1273,76 @@
                         "></div>
                     </div>
                 ` : ''}
-                
+
+                ${!isAdminAuthorized ? `
+                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #FF5252;">
+                        <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #FF5252; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">➖ Списание баллов</h3>
+
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов для списания:</label>
+                            <input type="number" id="subtract-points-input" placeholder="100" step="0.01"
+                                style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        </div>
+
+                        <button id="subtract-bonus-btn-public" style="
+                            width: 100%;
+                            padding: 15px;
+                            background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
+                            color: white;
+                            border: none;
+                            border-radius: 8px;
+                            cursor: pointer;
+                            font-size: 16px;
+                            font-weight: bold;
+                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);
+                            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                        ">➖ Списать баллы</button>
+
+                        <div id="subtract-result" style="
+                            padding: 15px;
+                            border-radius: 8px;
+                            display: none;
+                            margin-top: 15px;
+                        "></div>
+                    </div>
+                ` : ''}
+
                 <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #FFB8D1;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📝 Создать заявку на начисление</h3>
-                    
+
                     <div style="margin-bottom: 15px;">
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов для начисления:</label>
                         <input type="number" id="request-points-input" placeholder="100" step="0.01"
                             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     </div>
-                    
+
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Причина начисления (можно выбрать несколько):</label>
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            ${Object.values(REASON_CATEGORIES).filter(cat => cat.key !== 'custom').map(cat => `
+                                <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #f9f9f9; border-radius: 6px; border: 1px solid #e0e0e0; transition: all 0.2s;">
+                                    <input type="checkbox" name="reason-category" value="${cat.key}"
+                                        style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #FFB8D1;">
+                                    <span style="font-size: 14px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${cat.icon} ${cat.label}</span>
+                                </label>
+                            `).join('')}
+                            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #f9f9f9; border-radius: 6px; border: 1px solid #e0e0e0; transition: all 0.2s;">
+                                <input type="checkbox" name="reason-category" value="custom" id="custom-reason-checkbox"
+                                    style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #FFB8D1;">
+                                <span style="font-size: 14px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✏️ Другое:</span>
+                                <input type="text" id="custom-reason-input" placeholder="Укажите свою причину..."
+                                    style="flex: 1; margin-left: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            </label>
+                        </div>
+                    </div>
+
                     <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Причина начисления:</label>
-                        <textarea id="request-reason-input" placeholder="Например: Опоздали с доставкой, завял букет, забыли открытку..." rows="3"
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Примечание (опционально):</label>
+                        <textarea id="request-note-input" placeholder="Опишите ситуацию подробнее..." rows="2"
                             style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"></textarea>
                     </div>
-                    
+
                     <button id="create-request-btn" style="
                         width: 100%;
                         padding: 15px;
@@ -1294,7 +1357,7 @@
                         box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Отправить заявку</button>
-                    
+
                     <div id="request-result" style="
                         padding: 15px;
                         border-radius: 8px;
@@ -1302,7 +1365,7 @@
                         margin-top: 15px;
                     "></div>
                 </div>
-                
+
                 <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <h3 style="margin: 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📋 Заявки на начисление</h3>
@@ -1319,9 +1382,65 @@
                             transition: all 0.2s;
                         ">🔄 Синхронизировать</button>
                     </div>
-                    
+
                     <div id="bonus-requests-list" style="max-height: 500px; overflow-y: auto;">
                         ${renderBonusRequestsList()}
+                    </div>
+                </div>
+
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0; margin-top: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 style="margin: 0; font-size: 18px; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Аналитика по причинам начисления</h3>
+                        <button id="load-category-analytics-btn" style="
+                            padding: 8px 16px;
+                            background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
+                            color: white;
+                            border: none;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 13px;
+                            font-weight: bold;
+                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            transition: all 0.2s;
+                        ">📈 Загрузить аналитику</button>
+                    </div>
+
+                    <div id="category-analytics-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">🚚 Проблемы с доставкой</div>
+                            <div id="category-delivery-count" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-delivery-points">0 баллов</div>
+                        </div>
+
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E91E63;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">🌸 Проблема с качеством</div>
+                            <div id="category-quality-count" style="font-size: 28px; font-weight: bold; color: #E91E63; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-quality-points">0 баллов</div>
+                        </div>
+
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #2196F3;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✉️ Жалобы на открытку</div>
+                            <div id="category-card-count" style="font-size: 28px; font-weight: bold; color: #2196F3; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-card-points">0 баллов</div>
+                        </div>
+
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #607D8B;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">❓ Прочие проблемы</div>
+                            <div id="category-other_problems-count" style="font-size: 28px; font-weight: bold; color: #607D8B; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-other_problems-points">0 баллов</div>
+                        </div>
+
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0; grid-column: span 2;">
+                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✏️ Другое (своя причина)</div>
+                            <div id="category-custom-count" style="font-size: 28px; font-weight: bold; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-custom-points">0 баллов</div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%); border-radius: 8px; text-align: center;">
+                        <div style="font-size: 12px; color: #666; margin-bottom: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Всего заявок</div>
+                        <div id="category-total-requests" style="font-size: 24px; font-weight: bold; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
+                        <div id="category-total-points" style="font-size: 14px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0 баллов</div>
                     </div>
                 </div>
             </div>
@@ -1330,7 +1449,7 @@
         if (isAdminAuthorized) {
             const addBtn = document.getElementById('add-bonus-btn');
             const subtractBtn = document.getElementById('subtract-bonus-btn');
-            
+
             addBtn.onclick = () => modifyBonusPoints('add');
             addBtn.onmouseover = () => {
                 addBtn.style.transform = 'translateY(-2px)';
@@ -1340,7 +1459,7 @@
                 addBtn.style.transform = 'translateY(0)';
                 addBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
             };
-            
+
             subtractBtn.onclick = () => modifyBonusPoints('subtract');
             subtractBtn.onmouseover = () => {
                 subtractBtn.style.transform = 'translateY(-2px)';
@@ -1351,7 +1470,21 @@
                 subtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
             };
         }
-        
+
+        // Обработчик для публичной кнопки списания (без админа)
+        const publicSubtractBtn = document.getElementById('subtract-bonus-btn-public');
+        if (publicSubtractBtn) {
+            publicSubtractBtn.onclick = () => modifyBonusPoints('subtract', 'subtract-points-input', 'subtract-result');
+            publicSubtractBtn.onmouseover = () => {
+                publicSubtractBtn.style.transform = 'translateY(-2px)';
+                publicSubtractBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
+            };
+            publicSubtractBtn.onmouseout = () => {
+                publicSubtractBtn.style.transform = 'translateY(0)';
+                publicSubtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
+            };
+        }
+
         const createRequestBtn = document.getElementById('create-request-btn');
         createRequestBtn.onclick = createBonusRequest;
         createRequestBtn.onmouseover = () => {
@@ -1362,7 +1495,7 @@
             createRequestBtn.style.transform = 'translateY(0)';
             createRequestBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-        
+
         const syncRequestsBtn = document.getElementById('sync-requests-btn');
         if (syncRequestsBtn) {
             syncRequestsBtn.onclick = () => syncBonusRequests(false);
@@ -1375,7 +1508,21 @@
                 syncRequestsBtn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
             };
         }
-        
+
+        // Обработчик для кнопки загрузки аналитики по категориям
+        const loadCategoryAnalyticsBtn = document.getElementById('load-category-analytics-btn');
+        if (loadCategoryAnalyticsBtn) {
+            loadCategoryAnalyticsBtn.onclick = loadCategoryAnalytics;
+            loadCategoryAnalyticsBtn.onmouseover = () => {
+                loadCategoryAnalyticsBtn.style.transform = 'scale(1.05)';
+                loadCategoryAnalyticsBtn.style.background = 'linear-gradient(135deg, #AB47BC 0%, #9C27B0 100%)';
+            };
+            loadCategoryAnalyticsBtn.onmouseout = () => {
+                loadCategoryAnalyticsBtn.style.transform = 'scale(1)';
+                loadCategoryAnalyticsBtn.style.background = 'linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%)';
+            };
+        }
+
         attachBonusRequestsButtonsListeners();
     }
 
@@ -1405,7 +1552,7 @@
                 }
             </style>
         `;
-        
+
         container.innerHTML = scrollbarStyles + `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="margin-bottom: 30px;">
@@ -1417,9 +1564,9 @@
                         ${renderGooglePromosList()}
                     </div>
                 </div>
-                
+
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-                
+
                 <div style="margin-bottom: 30px;">
                     <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; display: flex; align-items: center; justify-content: space-between;">
                         <span>Промокоды из amoCRM</span>
@@ -1568,8 +1715,8 @@
 
         return amoCRMPromoCodes.map(promo => {
             return `
-                <div class="amocrm-promo-card" style="background: white; border: 2px solid #FFD4E5; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;" 
-                     onmouseover="this.style.borderColor='#FF9EC4'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'" 
+                <div class="amocrm-promo-card" style="background: white; border: 2px solid #FFD4E5; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;"
+                     onmouseover="this.style.borderColor='#FF9EC4'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'"
                      onmouseout="this.style.borderColor='#FFD4E5'; this.style.boxShadow='none'">
                     <button class="delete-amocrm-promo-btn" data-promo-code="${promo.value}" data-promo-id="${promo.id}" style="
                         position: absolute;
@@ -1830,16 +1977,16 @@
 
     function renderSettingsTab(container) {
         loadSettings();
-        
+
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">URL Google Apps Script Web App:</label>
-                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..." 
+                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..."
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
                 </div>
-                
+
                 <button id="save-webapp-url-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -1853,9 +2000,9 @@
                     font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                     margin-bottom: 20px;
                 ">Сохранить URL</button>
-                
+
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-                
+
                 <button id="sync-google-sheet-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -1871,7 +2018,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из Google Таблицы</button>
-                
+
                 <button id="sync-amocrm-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -1887,7 +2034,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из amoCRM</button>
-                
+
                 <button id="sync-amocrm-to-google-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -1934,9 +2081,9 @@
                     </div>
                     <div style="margin-top: 15px; font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
                 </div>
-                
+
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-                
+
                 <div style="background: ${isAdminAuthorized ? '#d4edda' : '#fff3e0'}; padding: 20px; border-radius: 8px; border-left: 4px solid ${isAdminAuthorized ? '#4CAF50' : '#FF9800'};">
                     <h3 style="margin: 0 0 15px 0; font-size: 16px; color: ${isAdminAuthorized ? '#155724' : '#E65100'}; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                         ${isAdminAuthorized ? '✅ Режим администратора' : '🔒 Защита данных'}
@@ -1981,7 +2128,7 @@
         `;
 
         document.getElementById('save-webapp-url-btn').onclick = saveWebAppUrl;
-        
+
         const syncGoogleBtn = document.getElementById('sync-google-sheet-btn');
         syncGoogleBtn.onclick = () => syncWithGoogleSheet(false);
         syncGoogleBtn.onmouseover = () => {
@@ -1992,7 +2139,7 @@
             syncGoogleBtn.style.transform = 'translateY(0)';
             syncGoogleBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-        
+
         const syncAmoCRMBtn = document.getElementById('sync-amocrm-btn');
         syncAmoCRMBtn.onclick = () => syncWithAmoCRM(false);
         syncAmoCRMBtn.onmouseover = () => {
@@ -2120,7 +2267,7 @@
             <h3 style="margin: 0 0 20px 0; font-size: 20px; color: #333; text-align: center; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 🔐 Код администратора
             </h3>
-            <input type="password" id="admin-password-input" placeholder="Введите код" 
+            <input type="password" id="admin-password-input" placeholder="Введите код"
                 style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; margin-bottom: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; text-align: center; letter-spacing: 3px;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                 <button id="cancel-password-btn" style="
@@ -2203,7 +2350,7 @@
 
         try {
             await syncWithGoogleSheet(true);
-            
+
             const promo = promoCodesCache.find(p => p.code.toUpperCase() === code);
 
             if (!promo) {
@@ -2214,10 +2361,10 @@
             const validation = validatePromoCode(promo, phone, orderAmount);
 
             if (validation.valid) {
-                const discountText = promo.discountType === 'процент' 
-                    ? `${promo.discount}%` 
+                const discountText = promo.discountType === 'процент'
+                    ? `${promo.discount}%`
                     : `${promo.discount} ₽`;
-                
+
                 let detailsHtml = `
                     <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #FFB8D1;">Промокод активен!</div>
                     <div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Скидка:</strong> ${discountText}</div>
@@ -2278,7 +2425,7 @@
             const expiry = new Date(promo.expiryDate);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            
+
             if (expiry < today) {
                 return { valid: false, reason: `Срок действия истек ${formatDate(promo.expiryDate)}` };
             }
@@ -2333,8 +2480,8 @@
             }
             const leadId = leadIdMatch[1];
 
-            const promoEnumItem = amoCRMPromoCodes.find(p => 
-                p.value.toUpperCase() === promo.code.toUpperCase() || 
+            const promoEnumItem = amoCRMPromoCodes.find(p =>
+                p.value.toUpperCase() === promo.code.toUpperCase() ||
                 p.value.toUpperCase().startsWith(promo.code.toUpperCase())
             );
 
@@ -2467,7 +2614,7 @@
             }
         } else if (target === 'amocrm') {
             showResult(resultDiv, 'Добавляю промокод в amoCRM...', 'info');
-            
+
             try {
                 await addPromoCodeToAmoCRM(code);
                 showResult(resultDiv, 'Промокод успешно добавлен в amoCRM!', 'success');
@@ -2520,15 +2667,15 @@
 
         const existingEnums = fieldData.enums || [];
         console.log('Существующие промокоды:', existingEnums.length);
-        
+
         const enumExists = existingEnums.some(e => e.value.toUpperCase() === code.toUpperCase());
         if (enumExists) {
             console.warn('Промокод уже существует');
             throw new Error('Промокод уже существует в amoCRM');
         }
 
-        const maxSort = existingEnums.length > 0 
-            ? Math.max(...existingEnums.map(e => e.sort || 0)) 
+        const maxSort = existingEnums.length > 0
+            ? Math.max(...existingEnums.map(e => e.sort || 0))
             : 0;
 
         const newEnums = [
@@ -2632,7 +2779,7 @@
                 promoCodesCache = response.promoCodes;
                 cachePromoCodes(promoCodesCache);
                 updateStatistics();
-                
+
                 const activeTab = document.querySelector('.promo-tab.active');
                 if (activeTab && activeTab.dataset.tab === 'list') {
                     const googleList = document.getElementById('google-promos-list');
@@ -2641,7 +2788,7 @@
                         attachDeleteButtonsListeners();
                     }
                 }
-                
+
                 if (!silent) showNotification(`Загружено ${promoCodesCache.length} промокодов из Google Таблицы`, 'success');
             }
         } catch (error) {
@@ -2652,14 +2799,14 @@
 
     function parseAmoCRMPromoCode(value) {
         const bracketMatch = value.match(/^(.+?)\s*\((.+)\)$/);
-        
+
         if (bracketMatch) {
             return {
                 code: bracketMatch[1].trim(),
                 description: bracketMatch[2].trim()
             };
         }
-        
+
         return {
             code: value.trim(),
             description: ''
@@ -2692,12 +2839,12 @@
                     value: e.value,
                     sort: e.sort
                 }));
-                
+
                 cacheAmoCRMPromoCodes(amoCRMPromoCodes);
-                
+
                 if (!silent) showNotification(`Загружено ${amoCRMPromoCodes.length} промокодов из amoCRM`, 'success');
                 updateStatistics();
-                
+
                 const activeTab = document.querySelector('.promo-tab.active');
                 if (activeTab && activeTab.dataset.tab === 'list') {
                     const amoCRMList = document.getElementById('amocrm-promos-list');
@@ -2706,7 +2853,7 @@
                         attachDeleteButtonsListeners();
                     }
                 }
-                
+
                 if (webAppUrl && amoCRMPromoCodes.length > 0 && !silent) {
                     await syncAmoCRMToGoogleSheets();
                 }
@@ -2724,7 +2871,7 @@
 
         try {
             showNotification('Синхронизирую промокоды с Google Таблицей...', 'info');
-            
+
             const formattedPromoCodes = amoCRMPromoCodes.map(promo => {
                 const parsed = parseAmoCRMPromoCode(promo.value);
                 return {
@@ -2749,10 +2896,10 @@
 
             if (response.success) {
                 showNotification(
-                    `${response.message}`, 
+                    `${response.message}`,
                     'success'
                 );
-                
+
                 await syncWithGoogleSheet(true);
             } else {
                 showNotification('Ошибка синхронизации с Google Таблицей', 'warning');
@@ -2897,12 +3044,12 @@
 
     async function deleteGooglePromoCode(code) {
         console.log('deleteGooglePromoCode вызвана с кодом:', code);
-        
+
         if (!isAdminAuthorized) {
             showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
-        
+
         if (!confirm(`Вы уверены, что хотите удалить промокод "${code}" из Google Таблицы?`)) {
             console.log('Пользователь отменил удаление');
             return;
@@ -2928,9 +3075,9 @@
             if (response.success) {
                 promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== code.toUpperCase());
                 cachePromoCodes(promoCodesCache);
-                
+
                 showNotification('Промокод удален из Google Таблицы!', 'success');
-                
+
                 switchTab('list');
             } else {
                 console.error('Ошибка от сервера:', response.error);
@@ -2947,7 +3094,7 @@
             showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
-        
+
         if (!confirm(`Вы уверены, что хотите удалить промокод "${code}"?\n\nВнимание: Промокод будет удален из amoCRM и Google Таблицы.`)) {
             return;
         }
@@ -2994,13 +3141,13 @@
             if (webAppUrl) {
                 const parsed = parseAmoCRMPromoCode(code);
                 const cleanCode = parsed.code;
-                
+
                 try {
                     const deleteFromGoogleResponse = await makeGoogleScriptRequest('POST', {
                         action: 'delete',
                         code: cleanCode
                     });
-                    
+
                     if (deleteFromGoogleResponse.success) {
                         console.log('Промокод также удален из Google Таблицы');
                         promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== cleanCode.toUpperCase());
@@ -3010,9 +3157,9 @@
                     console.warn('Не удалось удалить промокод из Google Таблицы:', googleError);
                 }
             }
-            
+
             showNotification('Промокод удален из amoCRM и Google Таблицы!', 'success');
-            
+
             switchTab('list');
 
         } catch (error) {
@@ -3023,16 +3170,16 @@
 
     function loadCurrentBonusPoints() {
         const bonusInput = document.querySelector(`input[name="CFV[${BONUS_FIELD_ID}]"]`);
-        
+
         if (bonusInput && bonusInput.value) {
             currentBonusPoints = parseFloat(bonusInput.value) || 0;
         } else {
             currentBonusPoints = 0;
         }
-        
+
         const firstNameInput = document.querySelector('input[name="contact[FN]"]');
         const lastNameInput = document.querySelector('input[name="contact[LN]"]');
-        
+
         if (firstNameInput || lastNameInput) {
             const firstName = firstNameInput?.value || '';
             const lastName = lastNameInput?.value || '';
@@ -3040,7 +3187,7 @@
         } else {
             currentContactName = 'Без имени';
         }
-        
+
         const leadIdMatch = window.location.href.match(/\/leads\/detail\/(\d+)/);
         if (leadIdMatch) {
             const leadId = leadIdMatch[1];
@@ -3052,7 +3199,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/leads/${leadId}?with=contacts`;
-            
+
             const response = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
@@ -3079,7 +3226,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${currentContactId}`;
-            
+
             const response = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
@@ -3101,11 +3248,12 @@
         }
     }
 
-    async function modifyBonusPoints(action) {
-        const resultDiv = document.getElementById('bonus-result');
-        
-        if (!isAdminAuthorized) {
-            showResult(resultDiv, '🔒 Для начисления и списания баллов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
+    async function modifyBonusPoints(action, inputId = 'bonus-points-input', resultId = 'bonus-result') {
+        const resultDiv = document.getElementById(resultId);
+
+        // Проверка авторизации: начисление требует админа, списание - нет
+        if (!isAdminAuthorized && action === 'add') {
+            showResult(resultDiv, '🔒 Для начисления баллов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
 
@@ -3114,7 +3262,7 @@
             return;
         }
 
-        const pointsInput = document.getElementById('bonus-points-input');
+        const pointsInput = document.getElementById(inputId);
         const points = parseFloat(pointsInput.value);
 
         if (!points || points <= 0) {
@@ -3138,7 +3286,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${currentContactId}`;
-            
+
             const payload = {
                 custom_fields_values: [
                     {
@@ -3162,34 +3310,34 @@
 
             if (response.ok) {
                 currentBonusPoints = newBalance;
-                
+
                 const displayElement = document.getElementById('current-bonus-display');
                 if (displayElement) {
                     displayElement.textContent = newBalance.toFixed(2);
                 }
-                
+
                 const contactInfoElement = document.getElementById('contact-info');
                 if (contactInfoElement && currentContactName) {
                     contactInfoElement.textContent = currentContactName;
                 }
-                
+
                 const domInput = document.querySelector(`input[name="CFV[${BONUS_FIELD_ID}]"]`);
                 if (domInput) {
                     domInput.value = newBalance.toFixed(2);
                 }
-                
+
                 pointsInput.value = '';
-                
+
                 const actionText = action === 'add' ? 'начислено' : 'списано';
                 showResult(resultDiv, `Успешно ${actionText} ${points.toFixed(2)} баллов. Новый баланс: ${newBalance.toFixed(2)}`, 'success');
-                
+
                 showNotification(`Баллы успешно ${actionText}!`, 'success');
-                
+
                 const transactionType = action === 'add' ? 'начисление' : 'списание';
                 const leadIdMatch = window.location.href.match(/\/leads\/detail\/(\d+)/);
                 const leadId = leadIdMatch ? leadIdMatch[1] : '';
                 const leadName = document.querySelector('.card-name__name')?.textContent || '';
-                
+
                 await logBonusTransaction(transactionType, points, currentContactId, currentContactName, leadId, leadName, 'админ');
             } else {
                 const errorText = await response.text();
@@ -3210,22 +3358,22 @@
                 <div style="font-size: 14px;">Нажмите "Синхронизировать" чтобы загрузить заявки из Google Таблицы</div>
             </div>`;
         }
-        
+
         return bonusRequestsCache.map(request => {
             const statusColors = {
                 'ожидает': { bg: '#fff3cd', text: '#856404', icon: '⏳' },
                 'одобрено': { bg: '#d4edda', text: '#155724', icon: '✅' },
                 'отклонено': { bg: '#f8d7da', text: '#721c24', icon: '❌' }
             };
-            
+
             const statusStyle = statusColors[request.status] || statusColors['ожидает'];
-            
+
             return `
                 <div style="background: #f9f9f9; border: 2px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                         <div style="flex: 1;">
                             <div style="font-size: 16px; font-weight: bold; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-bottom: 5px;">
-                                ${request.contactName || 'Без имени'} 
+                                ${request.contactName || 'Без имени'}
                                 <span style="font-size: 20px; color: #FFB8D1; margin-left: 10px;">+${request.points}</span>
                             </div>
                             <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3236,13 +3384,13 @@
                             ${statusStyle.icon} ${request.status}
                         </div>
                     </div>
-                    
+
                     <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
                         <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                             <strong>Причина:</strong> ${request.reason}
                         </div>
                     </div>
-                    
+
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <a href="${request.leadUrl}" target="_blank" style="
                             font-size: 12px;
@@ -3251,7 +3399,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             font-weight: 600;
                         ">🔗 Перейти в сделку</a>
-                        
+
                         ${isAdminAuthorized && request.status === 'ожидает' ? `
                             <div style="display: flex; gap: 10px;">
                                 <button class="approve-request-btn" data-request-id="${request.requestId}" data-contact-id="${request.contactId}" data-points="${request.points}" style="
@@ -3266,7 +3414,7 @@
                                     font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                                     transition: all 0.2s;
                                 ">✅ Одобрить</button>
-                                
+
                                 <button class="reject-request-btn" data-request-id="${request.requestId}" style="
                                     padding: 8px 16px;
                                     background: #FF5252;
@@ -3286,11 +3434,11 @@
             `;
         }).join('');
     }
-    
+
     function attachBonusRequestsButtonsListeners() {
         const approveButtons = document.querySelectorAll('.approve-request-btn');
         const rejectButtons = document.querySelectorAll('.reject-request-btn');
-        
+
         approveButtons.forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -3300,7 +3448,7 @@
                 await approveBonusRequest(requestId, contactId, points);
             });
         });
-        
+
         rejectButtons.forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -3331,12 +3479,12 @@
     function renderAnalyticsTab(container) {
         const today = new Date();
         const todayStr = formatDateForInput(today);
-        
+
         container.innerHTML = `
             <div style="max-width: 1000px; margin: 0 auto;">
                 <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 2px solid #e0e0e0;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Выберите период и фильтры</h3>
-                    
+
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px;">
                         <button class="period-btn" data-period="today" style="
                             padding: 12px;
@@ -3350,7 +3498,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Сегодня</button>
-                        
+
                         <button class="period-btn" data-period="week" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3363,7 +3511,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Неделя</button>
-                        
+
                         <button class="period-btn" data-period="month" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3376,7 +3524,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Месяц</button>
-                        
+
                         <button class="period-btn" data-period="custom" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3390,7 +3538,7 @@
                             transition: all 0.2s;
                         ">Произвольный</button>
                     </div>
-                    
+
                     <div style="margin-bottom: 20px;">
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Источник:</label>
                         <select id="source-filter" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3399,7 +3547,7 @@
                             <option value="админ">👤 Ручные (Администратор)</option>
                         </select>
                     </div>
-                    
+
                     <div id="custom-period-block" style="display: none; margin-bottom: 20px;">
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div>
@@ -3414,7 +3562,7 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <button id="load-analytics-btn" style="
                         width: 100%;
                         padding: 15px;
@@ -3430,7 +3578,7 @@
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Загрузить аналитику</button>
                 </div>
-                
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
                     <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Начислено</div>
@@ -3439,7 +3587,7 @@
                         </div>
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-added-rub">0 ₽</div>
                     </div>
-                    
+
                     <div style="background: linear-gradient(135deg, #FF5252 0%, #E53935 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Списано</div>
                         <div id="total-subtracted-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3447,7 +3595,7 @@
                         </div>
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-subtracted-rub">0 ₽</div>
                     </div>
-                    
+
                     <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Итого баллов</div>
                         <div id="total-balance-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3456,7 +3604,7 @@
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-balance-rub">0 ₽</div>
                     </div>
                 </div>
-                
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">⚡ Автоматические начисления (F5)</div>
@@ -3464,7 +3612,7 @@
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="f5-added-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-f5">Транзакций: 0</div>
                     </div>
-                    
+
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">👤 Ручные операции (Админ)</div>
                         <div id="admin-operations-display" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
@@ -3472,7 +3620,7 @@
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-admin">Транзакций: 0</div>
                     </div>
                 </div>
-                
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #4CAF50;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее начисление</div>
@@ -3480,7 +3628,7 @@
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="avg-added-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-added">Транзакций: 0</div>
                     </div>
-                    
+
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF5252;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее списание</div>
                         <div id="avg-subtracted-display" style="font-size: 28px; font-weight: bold; color: #FF5252; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
@@ -3488,10 +3636,10 @@
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-subtracted">Транзакций: 0</div>
                     </div>
                 </div>
-                
+
                 <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">История транзакций</h3>
-                    
+
                     <div id="analytics-transactions-list" style="max-height: 500px; overflow-y: auto;">
                         <div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                             <div style="font-size: 48px; margin-bottom: 15px;">📊</div>
@@ -3501,7 +3649,7 @@
                 </div>
             </div>
         `;
-        
+
         const periodButtons = container.querySelectorAll('.period-btn');
         periodButtons.forEach(btn => {
             btn.addEventListener('click', () => {
@@ -3511,7 +3659,7 @@
                 });
                 btn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
                 btn.style.color = 'white';
-                
+
                 const customBlock = document.getElementById('custom-period-block');
                 if (btn.dataset.period === 'custom') {
                     customBlock.style.display = 'block';
@@ -3520,7 +3668,7 @@
                 }
             });
         });
-        
+
         const loadAnalyticsBtn = document.getElementById('load-analytics-btn');
         loadAnalyticsBtn.onclick = loadAnalytics;
         loadAnalyticsBtn.onmouseover = () => {
@@ -3531,7 +3679,7 @@
             loadAnalyticsBtn.style.transform = 'translateY(0)';
             loadAnalyticsBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-        
+
         loadAnalytics();
     }
 
@@ -3540,13 +3688,13 @@
             showNotification('Настройте URL Google Apps Script', 'warning');
             return;
         }
-        
+
         const activePeriod = document.querySelector('.period-btn[style*="linear-gradient"]');
         const period = activePeriod ? activePeriod.dataset.period : 'today';
-        
+
         let startDate, endDate;
         const today = new Date();
-        
+
         if (period === 'today') {
             startDate = formatDateForInput(today);
             endDate = formatDateForInput(today);
@@ -3564,22 +3712,22 @@
             startDate = document.getElementById('custom-start-date').value;
             endDate = document.getElementById('custom-end-date').value;
         }
-        
+
         const sourceFilter = document.getElementById('source-filter')?.value || 'all';
-        
+
         console.log('Загружаю аналитику за период:', startDate, '-', endDate, 'Источник:', sourceFilter);
         showNotification('Загружаю аналитику...', 'info');
-        
+
         try {
-            const response = await makeGoogleScriptRequest('GET', { 
+            const response = await makeGoogleScriptRequest('GET', {
                 action: 'getAnalytics',
                 startDate: startDate,
                 endDate: endDate,
                 source: sourceFilter
             });
-            
+
             console.log('Ответ от сервера:', response);
-            
+
             if (response) {
                 if (response.debug) {
                     console.log('Debug info:', response.debug);
@@ -3605,7 +3753,7 @@
         const addedRubDisplay = document.getElementById('total-added-rub');
         const subtractedRubDisplay = document.getElementById('total-subtracted-rub');
         const balanceRubDisplay = document.getElementById('total-balance-rub');
-        
+
         if (addedDisplay) addedDisplay.textContent = analyticsCache.totalAdded.toFixed(2);
         if (subtractedDisplay) subtractedDisplay.textContent = analyticsCache.totalSubtracted.toFixed(2);
         if (balanceDisplay) {
@@ -3618,12 +3766,12 @@
             const balanceRub = analyticsCache.totalAddedRub - analyticsCache.totalSubtractedRub;
             balanceRubDisplay.textContent = `${balanceRub.toFixed(2)} ₽`;
         }
-        
+
         const f5AddedDisplay = document.getElementById('f5-added-display');
         const f5AddedRubDisplay = document.getElementById('f5-added-rub');
         const adminOpsDisplay = document.getElementById('admin-operations-display');
         const adminOpsRubDisplay = document.getElementById('admin-operations-rub');
-        
+
         if (f5AddedDisplay && analyticsCache.f5Added !== undefined) {
             f5AddedDisplay.textContent = analyticsCache.f5Added.toFixed(2);
         }
@@ -3653,7 +3801,7 @@
         const avgSubtractedDisplay = document.getElementById('avg-subtracted-display');
         const avgSubtractedRubDisplay = document.getElementById('avg-subtracted-rub');
         const countSubtractedDisplay = document.getElementById('count-subtracted');
-        
+
         if (avgAddedDisplay && analyticsCache.avgAdded !== undefined) {
             avgAddedDisplay.textContent = analyticsCache.avgAdded.toFixed(2);
         }
@@ -3672,7 +3820,7 @@
         if (countSubtractedDisplay && analyticsCache.countSubtracted !== undefined) {
             countSubtractedDisplay.textContent = `Транзакций: ${analyticsCache.countSubtracted}`;
         }
-        
+
         const transactionsList = document.getElementById('analytics-transactions-list');
         if (transactionsList) {
             transactionsList.innerHTML = renderAnalyticsTransactions();
@@ -3773,41 +3921,93 @@
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
     }
-    
+
     async function createBonusRequest() {
         const pointsInput = document.getElementById('request-points-input');
-        const reasonInput = document.getElementById('request-reason-input');
+        const noteInput = document.getElementById('request-note-input');
+        const customReasonInput = document.getElementById('custom-reason-input');
         const resultDiv = document.getElementById('request-result');
-        
+
         const points = parseFloat(pointsInput.value);
-        const reason = reasonInput.value.trim();
-        
+        const note = noteInput ? noteInput.value.trim() : '';
+        const customReason = customReasonInput ? customReasonInput.value.trim() : '';
+
+        // Собираем выбранные категории
+        const selectedCheckboxes = document.querySelectorAll('input[name="reason-category"]:checked');
+        const selectedCategories = [];
+
+        selectedCheckboxes.forEach(checkbox => {
+            const key = checkbox.value;
+            if (key === 'custom') {
+                if (customReason) {
+                    selectedCategories.push({
+                        key: key,
+                        label: REASON_CATEGORIES[key].label,
+                        customText: customReason
+                    });
+                }
+            } else if (REASON_CATEGORIES[key]) {
+                selectedCategories.push({
+                    key: key,
+                    label: REASON_CATEGORIES[key].label
+                });
+            }
+        });
+
         if (!points || points <= 0) {
             showResult(resultDiv, 'Введите корректное количество баллов', 'warning');
             return;
         }
-        
-        if (!reason) {
-            showResult(resultDiv, 'Укажите причину начисления баллов', 'warning');
+
+        if (selectedCategories.length === 0) {
+            showResult(resultDiv, 'Выберите хотя бы одну причину начисления', 'warning');
             return;
         }
-        
+
+        // Проверяем, что если выбрано "Другое", то указан текст
+        const customCheckbox = document.getElementById('custom-reason-checkbox');
+        if (customCheckbox && customCheckbox.checked && !customReason) {
+            showResult(resultDiv, 'Укажите текст для причины "Другое"', 'warning');
+            return;
+        }
+
         if (!currentContactId) {
             showResult(resultDiv, 'Контакт не определен. Откройте сделку с привязанным контактом.', 'error');
             return;
         }
-        
+
         if (!webAppUrl) {
             showResult(resultDiv, 'Настройте URL Google Apps Script в разделе "Настройки"', 'warning');
             return;
         }
-        
+
+        // Формируем текстовое описание причины
+        const reasonParts = [];
+
+        // Добавляем выбранные категории
+        const categoryLabels = selectedCategories.map(cat => {
+            if (cat.customText) {
+                return `${REASON_CATEGORIES[cat.key].icon} ${cat.label}: ${cat.customText}`;
+            }
+            return `${REASON_CATEGORIES[cat.key].icon} ${cat.label}`;
+        });
+        if (categoryLabels.length > 0) {
+            reasonParts.push(categoryLabels.join('; '));
+        }
+
+        // Добавляем примечание если есть
+        if (note) {
+            reasonParts.push(`Примечание: ${note}`);
+        }
+
+        const reason = reasonParts.join(' | ');
+
         showResult(resultDiv, 'Создаю заявку...', 'info');
-        
+
         try {
             const managerName = document.querySelector('.user-link__name')?.textContent || 'Неизвестный менеджер';
             const currentLeadUrl = window.location.href;
-            
+
             const requestData = {
                 action: 'addBonusRequest',
                 contactId: currentContactId,
@@ -3815,16 +4015,23 @@
                 leadUrl: currentLeadUrl,
                 points: points,
                 reason: reason,
+                categories: selectedCategories,
                 manager: managerName
             };
-            
+
             const response = await makeGoogleScriptRequest('POST', requestData);
-            
+
             if (response.success) {
                 showResult(resultDiv, 'Заявка успешно создана! Ожидайте одобрения администратора.', 'success');
+                // Очищаем все поля формы
                 pointsInput.value = '';
-                reasonInput.value = '';
-                
+                if (noteInput) noteInput.value = '';
+                if (customReasonInput) customReasonInput.value = '';
+                // Снимаем все чекбоксы
+                document.querySelectorAll('input[name="reason-category"]:checked').forEach(cb => {
+                    cb.checked = false;
+                });
+
                 await syncBonusRequests(false);
             } else {
                 showResult(resultDiv, `Ошибка: ${response.error || 'Не удалось создать заявку'}`, 'error');
@@ -3834,28 +4041,28 @@
             showResult(resultDiv, `Ошибка: ${error.message}`, 'error');
         }
     }
-    
+
     async function syncBonusRequests(silent = false) {
         if (!webAppUrl) {
             if (!silent) showNotification('Настройте URL Google Apps Script', 'warning');
             return;
         }
-        
+
         if (!silent) showNotification('Загружаю заявки из Google Таблицы...', 'info');
-        
+
         try {
             const response = await makeGoogleScriptRequest('GET', { action: 'getBonusRequests' });
-            
+
             if (response.bonusRequests) {
                 bonusRequestsCache = response.bonusRequests;
                 localStorage.setItem('bonus_requests_cache', JSON.stringify(bonusRequestsCache));
-                
+
                 const requestsList = document.getElementById('bonus-requests-list');
                 if (requestsList) {
                     requestsList.innerHTML = renderBonusRequestsList();
                     attachBonusRequestsButtonsListeners();
                 }
-                
+
                 if (!silent) showNotification(`Загружено ${bonusRequestsCache.length} заявок`, 'success');
             }
         } catch (error) {
@@ -3863,41 +4070,91 @@
             if (!silent) showNotification('Ошибка загрузки заявок', 'error');
         }
     }
-    
+
+    async function loadCategoryAnalytics() {
+        if (!webAppUrl) {
+            showNotification('Настройте URL Google Apps Script', 'warning');
+            return;
+        }
+
+        showNotification('Загружаю аналитику по категориям...', 'info');
+
+        try {
+            const response = await makeGoogleScriptRequest('GET', { action: 'getCategoryAnalytics' });
+
+            if (response.categories) {
+                const categories = response.categories;
+
+                // Обновляем значения в блоках
+                const categoryKeys = ['delivery', 'quality', 'card', 'other_problems', 'custom'];
+
+                categoryKeys.forEach(key => {
+                    const countEl = document.getElementById(`category-${key}-count`);
+                    const pointsEl = document.getElementById(`category-${key}-points`);
+
+                    if (countEl && categories[key]) {
+                        countEl.textContent = categories[key].count || 0;
+                    }
+                    if (pointsEl && categories[key]) {
+                        pointsEl.textContent = `${(categories[key].points || 0).toFixed(2)} баллов`;
+                    }
+                });
+
+                // Обновляем итого
+                const totalRequestsEl = document.getElementById('category-total-requests');
+                const totalPointsEl = document.getElementById('category-total-points');
+
+                if (totalRequestsEl) {
+                    totalRequestsEl.textContent = response.totalRequests || 0;
+                }
+                if (totalPointsEl) {
+                    totalPointsEl.textContent = `${(response.totalPoints || 0).toFixed(2)} баллов`;
+                }
+
+                showNotification('Аналитика загружена', 'success');
+            } else {
+                showNotification('Не удалось загрузить аналитику', 'error');
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки аналитики по категориям:', error);
+            showNotification('Ошибка загрузки аналитики', 'error');
+        }
+    }
+
     async function approveBonusRequest(requestId, contactId, points) {
         if (!confirm(`Одобрить начисление ${points} баллов?`)) {
             return;
         }
-        
+
         showNotification('Начисляю баллы...', 'info');
-        
+
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${contactId}`;
-            
+
             const getResponse = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json'
                 }
             });
-            
+
             if (!getResponse.ok) {
                 throw new Error('Не удалось получить данные контакта');
             }
-            
+
             const contactData = await getResponse.json();
             let currentPoints = 0;
-            
+
             if (contactData.custom_fields_values) {
                 const bonusField = contactData.custom_fields_values.find(field => field.field_id === BONUS_FIELD_ID);
                 if (bonusField && bonusField.values && bonusField.values.length > 0) {
                     currentPoints = parseFloat(bonusField.values[0].value) || 0;
                 }
             }
-            
+
             const newBalance = currentPoints + points;
-            
+
             const payload = {
                 custom_fields_values: [
                     {
@@ -3906,7 +4163,7 @@
                     }
                 ]
             };
-            
+
             const updateResponse = await fetch(apiUrl, {
                 method: 'PATCH',
                 headers: {
@@ -3914,17 +4171,17 @@
                 },
                 body: JSON.stringify(payload)
             });
-            
+
             if (!updateResponse.ok) {
                 throw new Error('Не удалось начислить баллы');
             }
-            
+
             await makeGoogleScriptRequest('POST', {
                 action: 'updateBonusRequestStatus',
                 requestId: requestId,
                 status: 'одобрено'
             });
-            
+
             const request = bonusRequestsCache.find(r => r.requestId === requestId);
             if (request) {
                 await logBonusTransaction(
@@ -3937,7 +4194,7 @@
                     'админ'
                 );
             }
-            
+
             showNotification('Баллы успешно начислены!', 'success');
             await syncBonusRequests(false);
         } catch (error) {
@@ -3945,21 +4202,21 @@
             showNotification(`Ошибка: ${error.message}`, 'error');
         }
     }
-    
+
     async function rejectBonusRequest(requestId) {
         if (!confirm('Отклонить эту заявку?')) {
             return;
         }
-        
+
         showNotification('Обновляю статус заявки...', 'info');
-        
+
         try {
             const response = await makeGoogleScriptRequest('POST', {
                 action: 'updateBonusRequestStatus',
                 requestId: requestId,
                 status: 'отклонено'
             });
-            
+
             if (response.success) {
                 showNotification('Заявка отклонена', 'success');
                 await syncBonusRequests(false);
@@ -3974,10 +4231,10 @@
 
     async function logBonusTransaction(type, points, contactId, contactName, leadId, leadName, source) {
         if (!webAppUrl) return;
-        
+
         try {
             const managerName = document.querySelector('.user-link__name')?.textContent || 'Неизвестный менеджер';
-            
+
             const transactionData = {
                 action: 'logBonusTransaction',
                 type: type,
@@ -3989,7 +4246,7 @@
                 source: source || 'админ',
                 manager: managerName
             };
-            
+
             await makeGoogleScriptRequest('POST', transactionData);
         } catch (error) {
             console.error('Ошибка логирования транзакции:', error);
@@ -3998,7 +4255,7 @@
 
     function saveWebAppUrl() {
         const url = document.getElementById('webapp-url-input').value.trim();
-        
+
         if (!url) {
             showNotification('Введите URL', 'warning');
             return;
@@ -4105,7 +4362,7 @@
         currentLeadBudget = getLeadBudget();
         overlay.style.display = 'block';
         switchTab('check');
-        
+
         if (amoCRMPromoCodes.length === 0) {
             await syncWithAmoCRM(true);
         }
@@ -4121,7 +4378,7 @@
     function showResult(container, message, type) {
         container.style.display = 'block';
         container.innerHTML = message;
-        
+
         const colors = {
             success: { bg: '#d4edda', border: '#c3e6cb', text: '#155724' },
             error: { bg: '#f8d7da', border: '#f5c6cb', text: '#721c24' },
