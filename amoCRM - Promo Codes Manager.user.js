@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.5.1
+// @version      2.5.2
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -3136,10 +3136,13 @@
         leads.forEach(lead => {
             const cf = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
             if (!cf || !cf.values || !cf.values.length) return;
-            const enumId = cf.values[0].enum_id;
+            const val = cf.values[0];
+            const enumId = val.enum_id;
             if (enumId == null) return;
             withPromo++;
-            (grouped[enumId] = grouped[enumId] || []).push(lead);
+            // Название промокода берём прямо из сделки (не зависим от кэша enum-значений)
+            if (!grouped[enumId]) grouped[enumId] = { value: val.value || '', leads: [] };
+            grouped[enumId].leads.push(lead);
         });
         console.log(`[Аналитика промокодов] Воронка ${mainId}: всего сделок ${leads.length}, с промокодом ${withPromo}, различных промокодов ${Object.keys(grouped).length}`);
         return grouped;
@@ -3190,10 +3193,11 @@
 
         const byCode = {};
         Object.keys(grouped).forEach(enumId => {
+            const g = grouped[enumId];
             byCode[enumId] = {
-                code: nameByEnum[enumId] || ('Промокод #' + enumId),
+                code: g.value || nameByEnum[enumId] || ('Промокод #' + enumId),
                 enumId: Number(enumId),
-                leads: grouped[enumId].map(pickLeadFields)
+                leads: g.leads.map(pickLeadFields)
             };
         });
 
