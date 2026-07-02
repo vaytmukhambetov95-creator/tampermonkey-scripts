@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.5.0
+// @version      2.5.1
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -3092,7 +3092,7 @@
     }
 
     // Проходим все страницы выдачи /api/v4/leads по baseUrl
-    async function fetchLeadsPaged(baseUrl) {
+    async function fetchLeadsPaged(baseUrl, onPage) {
         const leads = [];
         let page = 1;
         while (true) {
@@ -3106,32 +3106,19 @@
             const data = await resp.json();
             const batch = (data && data._embedded && data._embedded.leads) || [];
             leads.push(...batch);
+            if (typeof onPage === 'function') onPage(page, leads.length);
             if (!data || !data._links || !data._links.next) break;   // последняя страница
             page++;
-            if (page > 40) break;                       // предохранитель (40*250=10000)
+            if (page > 60) break;                       // предохранитель (60*250=15000)
         }
         return leads;
     }
 
-    // Проверка: у сделки в поле промокода реально стоит нужный enum_id
-    function leadHasPromoEnum(lead, enumId) {
-        const cf = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
-        if (!cf || !cf.values) return false;
-        return cf.values.some(v => String(v.enum_id) === String(enumId));
-    }
-
-    // Strategy A: точечный запрос сделок по значению select-поля промокода
-    async function fetchLeadsByPromoValue(value, period, mainId) {
-        const domain = window.location.hostname;
-        let base = `https://${domain}/api/v4/leads?filter[custom_fields_values][${PROMO_FIELD_ID}][]=${encodeURIComponent(value)}`;
-        if (mainId) base += `&filter[pipeline_id]=${mainId}`;
-        if (period && period.from) base += `&filter[created_at][from]=${period.from}`;
-        if (period && period.to) base += `&filter[created_at][to]=${period.to}`;
-        base += `&order[created_at]=desc&limit=250`;
-        return await fetchLeadsPaged(base);
-    }
-
-    // Strategy B (fallback): один проход по основной воронке, группировка по enum_id
+    // Основной способ: один проход по основной воронке за период,
+    // чтение поля промокода у каждой сделки и группировка по enum_id.
+    // Это ровно то, что делает фильтр по промокоду в интерфейсе amoCRM (надёжно,
+    // в отличие от точечного filter[custom_fields_values], который для списковых
+    // полей отдаёт часть значений некорректно).
     async function fetchAllMainPipelineLeadsGrouped(period, mainId) {
         const domain = window.location.hostname;
         let base = `https://${domain}/api/v4/leads?limit=250`;
@@ -3139,16 +3126,22 @@
         if (period && period.from) base += `&filter[created_at][from]=${period.from}`;
         if (period && period.to) base += `&filter[created_at][to]=${period.to}`;
         base += `&order[created_at]=desc`;
-        const leads = await fetchLeadsPaged(base);
+
+        const leads = await fetchLeadsPaged(base, (page, total) => {
+            updateAnalyticsProgress(0, 0, `Обхожу основную воронку: загружено ${total} сделок`);
+        });
 
         const grouped = {};
+        let withPromo = 0;
         leads.forEach(lead => {
             const cf = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
             if (!cf || !cf.values || !cf.values.length) return;
             const enumId = cf.values[0].enum_id;
             if (enumId == null) return;
+            withPromo++;
             (grouped[enumId] = grouped[enumId] || []).push(lead);
         });
+        console.log(`[Аналитика промокодов] Воронка ${mainId}: всего сделок ${leads.length}, с промокодом ${withPromo}, различных промокодов ${Object.keys(grouped).length}`);
         return grouped;
     }
 
@@ -3173,7 +3166,8 @@
         return { count, sumBudget, won, conversion };
     }
 
-    // Оркестратор: строит аналитику по всем кодам, с авто-переключением на fallback
+    // Строит аналитику по всем промокодам: один обход основной воронки за период
+    // и группировка сделок по значению поля промокода (enum_id).
     async function buildPromoAnalytics(period) {
         const pinfo = await getMainPipelineAndStatuses();
         const mainId = pinfo.mainPipelineId;
@@ -3185,50 +3179,24 @@
             pipelineName: pinfo.pipelineName,
             statusMap: pinfo.statusMap,
             byCode: {},
-            strategy: 'A'
+            totalCodes: codes.length
         };
-        if (codes.length === 0) { cachePromoAnalytics(result); return result; }
 
-        let fallback = false;
-        let sanityFailed = false;
-        const rawByCode = {};
-        const CONCURRENCY = 4;
+        // Карта enum_id -> текст промокода (для подписи строк)
+        const nameByEnum = {};
+        codes.forEach(c => { nameByEnum[c.id] = c.value; });
 
-        try {
-            for (let i = 0; i < codes.length; i += CONCURRENCY) {
-                const slice = codes.slice(i, i + CONCURRENCY);
-                const settled = await Promise.all(slice.map(async c => ({
-                    c,
-                    leads: await fetchLeadsByPromoValue(c.value, period, mainId)
-                })));
-                settled.forEach(({ c, leads }) => {
-                    rawByCode[c.id] = leads;
-                    // Если вернулись сделки, но ни одна не содержит нужный enum_id - фильтр «врёт»
-                    if (leads.length > 0 && !leads.some(l => leadHasPromoEnum(l, c.id))) {
-                        sanityFailed = true;
-                    }
-                });
-                updateAnalyticsProgress(Math.min(i + CONCURRENCY, codes.length), codes.length, 'Загружаю сделки по кодам');
-            }
-            if (sanityFailed) fallback = true;
-        } catch (e) {
-            console.warn('[Аналитика промокодов] Strategy A не сработала, переключаюсь на fallback:', e);
-            fallback = true;
-        }
+        const grouped = await fetchAllMainPipelineLeadsGrouped(period, mainId);
 
         const byCode = {};
-        if (fallback) {
-            updateAnalyticsProgress(0, 0, 'Полный обход основной воронки');
-            const grouped = await fetchAllMainPipelineLeadsGrouped(period, mainId);
-            codes.forEach(c => {
-                byCode[c.id] = { code: c.value, enumId: c.id, leads: (grouped[c.id] || []).map(pickLeadFields) };
-            });
-            result.strategy = 'B';
-        } else {
-            codes.forEach(c => {
-                byCode[c.id] = { code: c.value, enumId: c.id, leads: (rawByCode[c.id] || []).map(pickLeadFields) };
-            });
-        }
+        Object.keys(grouped).forEach(enumId => {
+            byCode[enumId] = {
+                code: nameByEnum[enumId] || ('Промокод #' + enumId),
+                enumId: Number(enumId),
+                leads: grouped[enumId].map(pickLeadFields)
+            };
+        });
+
         result.byCode = byCode;
         cachePromoAnalytics(result);
         return result;
@@ -3286,7 +3254,7 @@
                     📊 Аналитика применения промокодов
                     <button id="refresh-promo-analytics-btn" style="padding: 5px 12px; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">🔄 Обновить</button>
                 </h3>
-                <div style="font-size: 13px; color: #666; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM (по основной воронке), включая коды без описания.</div>
+                <div style="font-size: 13px; color: #666; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM.</div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
                     ${mkPeriodBtn('today', 'Сегодня', false)}
                     ${mkPeriodBtn('week', 'Неделя', false)}
@@ -3395,7 +3363,7 @@
             return;
         }
 
-        updateAnalyticsProgress(0, amoCRMPromoCodes.length, 'Загружаю сделки по кодам');
+        updateAnalyticsProgress(0, 0, 'Обхожу основную воронку');
         try {
             const analytics = await buildPromoAnalytics(period);
             updateAnalyticsProgress(0, 0);
@@ -3420,7 +3388,7 @@
             .filter(c => c.metrics.count > 0)
             .sort((a, b) => b.metrics.count - a.metrics.count);
 
-        const zeroCount = Object.keys(analytics.byCode).length - rows.length;
+        const zeroCount = Math.max(0, (analytics.totalCodes || Object.keys(analytics.byCode).length) - rows.length);
         const totalApplies = rows.reduce((s, c) => s + c.metrics.count, 0);
         const totalBudget = rows.reduce((s, c) => s + c.metrics.sumBudget, 0);
 
@@ -3445,7 +3413,7 @@
             <div style="background:white; border-radius:10px; padding:12px; border:2px solid #FFD4E5;">
                 <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#666;">
                     <span>Воронка: <strong style="color:#FF69B4;">${analytics.pipelineName || '-'}</strong></span>
-                    <span>Кодов с применением: <strong style="color:#FF69B4;">${rows.length}</strong></span>
+                    <span>Промокодов с применением: <strong style="color:#FF69B4;">${rows.length}</strong></span>
                     <span>Всего применений: <strong style="color:#FF69B4;">${totalApplies}</strong></span>
                     <span>Сумма бюджетов: <strong style="color:#FF69B4;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
                 </div>
@@ -3460,8 +3428,8 @@
                     </thead>
                     <tbody>${rowsHtml}</tbody>
                 </table>
-                ${zeroCount > 0 ? `<div style="margin-top:8px; font-size:11px; color:#999; font-family:${AN_FONT};">Кодов без применений за период: ${zeroCount}</div>` : ''}
-                <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки${analytics.strategy === 'B' ? ' • режим полного обхода воронки' : ''}</div>
+                ${zeroCount > 0 ? `<div style="margin-top:8px; font-size:11px; color:#999; font-family:${AN_FONT};">Промокодов без применений за период: ${zeroCount}</div>` : ''}
+                <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки конкретного промокода</div>
             </div>`;
 
         summaryEl.querySelectorAll('.promo-an-row').forEach(row => {
@@ -3510,7 +3478,7 @@
         detailsEl.innerHTML = `
             <div style="background:linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius:10px; padding:15px; border:2px solid #FFB8D1;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <h4 style="margin:0; font-size:15px; color:#FF69B4; font-family:${AN_FONT};">Сделки по коду «${parsed.code}» (${leads.length})</h4>
+                    <h4 style="margin:0; font-size:15px; color:#FF69B4; font-family:${AN_FONT};">Сделки по промокоду «${parsed.code}» (${leads.length})</h4>
                     <button id="promo-an-close-details" style="background:#FF69B4; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
                 </div>
                 <div style="max-height:400px; overflow-y:auto;">${items}</div>
