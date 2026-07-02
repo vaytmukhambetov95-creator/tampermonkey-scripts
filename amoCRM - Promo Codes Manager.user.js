@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.5.2
+// @version      2.5.3
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -3172,6 +3172,9 @@
     // Строит аналитику по всем промокодам: один обход основной воронки за период
     // и группировка сделок по значению поля промокода (enum_id).
     async function buildPromoAnalytics(period) {
+        // Обновляем список значений поля промокода, чтобы перечень «без применений»
+        // был полным и актуальным. Ошибки внутри проглатываются самой функцией.
+        await syncWithAmoCRM(true);
         const pinfo = await getMainPipelineAndStatuses();
         const mainId = pinfo.mainPipelineId;
         const codes = amoCRMPromoCodes || [];
@@ -3392,7 +3395,12 @@
             .filter(c => c.metrics.count > 0)
             .sort((a, b) => b.metrics.count - a.metrics.count);
 
-        const zeroCount = Math.max(0, (analytics.totalCodes || Object.keys(analytics.byCode).length) - rows.length);
+        // Промокоды без применений за период = значения поля, которых нет среди применённых
+        const appliedEnumIds = new Set(rows.map(c => String(c.enumId)));
+        const zeroCodes = (amoCRMPromoCodes || [])
+            .filter(c => !appliedEnumIds.has(String(c.id)))
+            .map(c => parseAmoCRMPromoCode(c.value));
+        const zeroCount = zeroCodes.length;
         const totalApplies = rows.reduce((s, c) => s + c.metrics.count, 0);
         const totalBudget = rows.reduce((s, c) => s + c.metrics.sumBudget, 0);
 
@@ -3432,13 +3440,31 @@
                     </thead>
                     <tbody>${rowsHtml}</tbody>
                 </table>
-                ${zeroCount > 0 ? `<div style="margin-top:8px; font-size:11px; color:#999; font-family:${AN_FONT};">Промокодов без применений за период: ${zeroCount}</div>` : ''}
+                ${zeroCount > 0 ? `
+                <div style="margin-top:10px;">
+                    <button id="promo-an-zero-toggle" style="background:none; border:none; cursor:pointer; padding:0; font-family:${AN_FONT}; font-size:12px; color:#FF69B4; text-decoration:underline;">Промокодов без применений за период: ${zeroCount} — показать</button>
+                    <div id="promo-an-zero-list" style="display:none; margin-top:8px; padding:10px; background:#FFF7FA; border:1px dashed #FFB8D1; border-radius:8px;">
+                        ${zeroCodes.map(p => `<span style="display:inline-block; margin:3px 5px 3px 0; padding:3px 8px; background:#fff; border:1px solid #FFD4E5; border-radius:12px; font-size:12px; font-family:${AN_FONT}; color:#666;">${p.code}${p.description ? ` <span style="color:#bbb;">(${p.description})</span>` : ''}</span>`).join('')}
+                    </div>
+                </div>` : ''}
                 <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки конкретного промокода</div>
             </div>`;
 
         summaryEl.querySelectorAll('.promo-an-row').forEach(row => {
             row.addEventListener('click', () => renderPromoCodeDetails(row.dataset.enumId, analytics));
         });
+
+        // Кнопка «показать/скрыть» список промокодов без применений
+        const zeroToggle = document.getElementById('promo-an-zero-toggle');
+        if (zeroToggle) {
+            zeroToggle.addEventListener('click', () => {
+                const list = document.getElementById('promo-an-zero-list');
+                if (!list) return;
+                const shown = list.style.display !== 'none';
+                list.style.display = shown ? 'none' : 'block';
+                zeroToggle.textContent = `Промокодов без применений за период: ${zeroCount} — ${shown ? 'показать' : 'скрыть'}`;
+            });
+        }
     }
 
     // Детализация: список сделок конкретного кода со ссылками
