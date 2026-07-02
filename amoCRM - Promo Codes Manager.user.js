@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0
-// @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека и защитой паролем
+// @version      2.5.0
+// @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
 // @match        https://*.kommo.com/*
@@ -36,7 +36,7 @@
 
     // URL Google Apps Script по умолчанию (можно изменить в настройках)
     const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxgjarqYaSwLNQPt0jXnBp3HbFZtjbhVwJxxn0_Pfy7eIVjxbEZnHlWHlaEERZFmvUj/exec';
-
+    
     let promoCodesCache = [];
     let amoCRMPromoCodes = [];
     let webAppUrl = '';
@@ -179,7 +179,7 @@
                 font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                 color: #666;
                 transition: all 0.2s;
-            ">Список промокодов</button>
+            ">Промокоды</button>
             <button class="promo-tab" data-tab="bonus" style="
                 flex: 1;
                 padding: 15px;
@@ -296,17 +296,17 @@
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:</label>
-                    <input type="text" id="promo-code-input" placeholder="Введите промокод"
+                    <input type="text" id="promo-code-input" placeholder="Введите промокод" 
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-
+                
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон клиента:</label>
-                    <input type="text" id="client-phone-input" placeholder="+7 (999) 123-45-67"
+                    <input type="text" id="client-phone-input" placeholder="+7 (999) 123-45-67" 
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     <div id="phone-hint" style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон подтягивается автоматически из карточки контакта</div>
                 </div>
-
+                
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Сумма заказа (опционально):</label>
                     <input type="number" id="order-amount-input" placeholder="5000" value="${currentLeadBudget}"
@@ -337,7 +337,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Проверить промокод</button>
-
+                
                 <div id="promo-result" style="
                     padding: 20px;
                     border-radius: 8px;
@@ -356,7 +356,7 @@
             checkBtn.style.transform = 'translateY(0)';
             checkBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-
+        
         document.getElementById('promo-code-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') checkPromoCode();
         });
@@ -446,10 +446,10 @@
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:*</label>
-                    <input type="text" id="new-promo-code" placeholder="MAMA3"
+                    <input type="text" id="new-promo-code" placeholder="MAMA3" 
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; text-transform: uppercase; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-
+                
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Тип промокода:*</label>
                     <select id="new-promo-type" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -460,11 +460,11 @@
                         <option value="сотрудника">Сотрудника</option>
                     </select>
                 </div>
-
+                
                 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div>
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Скидка:*</label>
-                        <input type="number" id="new-promo-discount" placeholder="10"
+                        <input type="number" id="new-promo-discount" placeholder="10" 
                             style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     </div>
                     <div>
@@ -475,25 +475,25 @@
                         </select>
                     </div>
                 </div>
-
+                
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Минимальная сумма заказа:</label>
-                    <input type="number" id="new-promo-min-amount" placeholder="3000"
+                    <input type="number" id="new-promo-min-amount" placeholder="3000" 
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-
+                
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Срок действия:</label>
-                    <input type="date" id="new-promo-expiry"
+                    <input type="date" id="new-promo-expiry" 
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #333;">
                 </div>
-
+                
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Максимальное количество использований:</label>
-                    <input type="number" id="new-promo-max-usage" placeholder="100"
+                    <input type="number" id="new-promo-max-usage" placeholder="100" 
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 </div>
-
+                
                 <div style="margin-bottom: 15px; display: none;" id="phone-binding-block">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Привязка к телефонам:</label>
                     <div id="phone-bindings-list" style="margin-bottom: 10px;"></div>
@@ -521,13 +521,13 @@
                     </div>
                     <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Добавьте телефоны сотрудников, которым разрешено использовать этот промокод</div>
                 </div>
-
+                
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Описание:</label>
                     <textarea id="new-promo-description" placeholder="Описание промокода" rows="3"
                         style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"></textarea>
                 </div>
-
+                
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <button id="add-promo-google-btn" style="
                         padding: 15px;
@@ -543,7 +543,7 @@
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                         opacity: 1;
                     ">Сохранить в Google Таблицу</button>
-
+                    
                     <button id="add-promo-amocrm-btn" style="
                         padding: 15px;
                         background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
@@ -559,7 +559,7 @@
                         opacity: 1;
                     ">Сохранить в amoCRM</button>
                 </div>
-
+                
                 <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 6px; display: none;"></div>
 
                 <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
@@ -1210,9 +1210,9 @@
 
     function renderBonusTab(container) {
         loadCurrentBonusPoints();
-
+        
         const currentLeadUrl = window.location.href;
-
+        
         container.innerHTML = `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);">
@@ -1224,17 +1224,17 @@
                         ${currentContactId ? currentContactName : 'Контакт не определен'}
                     </div>
                 </div>
-
+                
                 ${isAdminAuthorized ? `
                     <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #4CAF50;">
                         <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #4CAF50; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Прямое начисление/списание (Админ)</h3>
-
+                        
                         <div style="margin-bottom: 20px;">
                             <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов:</label>
                             <input type="number" id="bonus-points-input" placeholder="100" step="0.01"
                                 style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                         </div>
-
+                        
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <button id="add-bonus-btn" style="
                                 padding: 15px;
@@ -1249,7 +1249,7 @@
                                 box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                             ">➕ Начислить</button>
-
+                            
                             <button id="subtract-bonus-btn" style="
                                 padding: 15px;
                                 background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
@@ -1264,7 +1264,7 @@
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                             ">➖ Списать</button>
                         </div>
-
+                        
                         <div id="bonus-result" style="
                             padding: 15px;
                             border-radius: 8px;
@@ -1357,7 +1357,7 @@
                         box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Отправить заявку</button>
-
+                    
                     <div id="request-result" style="
                         padding: 15px;
                         border-radius: 8px;
@@ -1365,7 +1365,7 @@
                         margin-top: 15px;
                     "></div>
                 </div>
-
+                
                 <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <h3 style="margin: 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📋 Заявки на начисление</h3>
@@ -1382,7 +1382,7 @@
                             transition: all 0.2s;
                         ">🔄 Синхронизировать</button>
                     </div>
-
+                    
                     <div id="bonus-requests-list" style="max-height: 500px; overflow-y: auto;">
                         ${renderBonusRequestsList()}
                     </div>
@@ -1449,7 +1449,7 @@
         if (isAdminAuthorized) {
             const addBtn = document.getElementById('add-bonus-btn');
             const subtractBtn = document.getElementById('subtract-bonus-btn');
-
+            
             addBtn.onclick = () => modifyBonusPoints('add');
             addBtn.onmouseover = () => {
                 addBtn.style.transform = 'translateY(-2px)';
@@ -1459,7 +1459,7 @@
                 addBtn.style.transform = 'translateY(0)';
                 addBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
             };
-
+            
             subtractBtn.onclick = () => modifyBonusPoints('subtract');
             subtractBtn.onmouseover = () => {
                 subtractBtn.style.transform = 'translateY(-2px)';
@@ -1495,7 +1495,7 @@
             createRequestBtn.style.transform = 'translateY(0)';
             createRequestBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-
+        
         const syncRequestsBtn = document.getElementById('sync-requests-btn');
         if (syncRequestsBtn) {
             syncRequestsBtn.onclick = () => syncBonusRequests(false);
@@ -1552,7 +1552,7 @@
                 }
             </style>
         `;
-
+        
         container.innerHTML = scrollbarStyles + `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="margin-bottom: 30px;">
@@ -1564,9 +1564,9 @@
                         ${renderGooglePromosList()}
                     </div>
                 </div>
-
+                
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-
+                
                 <div style="margin-bottom: 30px;">
                     <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; display: flex; align-items: center; justify-content: space-between;">
                         <span>Промокоды из amoCRM</span>
@@ -1576,6 +1576,8 @@
                         ${renderAmoCRMPromosList()}
                     </div>
                 </div>
+
+                ${isAdminAuthorized ? renderPromoAnalyticsBlockHtml() : ''}
 
                 <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
 
@@ -1611,6 +1613,11 @@
 
         // Загружаем статистику друзей сотрудников
         loadAndRenderFriendsStats();
+
+        // Инициализируем блок аналитики применения промокодов (только для админа)
+        if (isAdminAuthorized) {
+            initPromoAnalyticsBlock();
+        }
     }
 
     function renderGooglePromosList() {
@@ -1715,8 +1722,8 @@
 
         return amoCRMPromoCodes.map(promo => {
             return `
-                <div class="amocrm-promo-card" style="background: white; border: 2px solid #FFD4E5; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;"
-                     onmouseover="this.style.borderColor='#FF9EC4'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'"
+                <div class="amocrm-promo-card" style="background: white; border: 2px solid #FFD4E5; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;" 
+                     onmouseover="this.style.borderColor='#FF9EC4'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'" 
                      onmouseout="this.style.borderColor='#FFD4E5'; this.style.boxShadow='none'">
                     <button class="delete-amocrm-promo-btn" data-promo-code="${promo.value}" data-promo-id="${promo.id}" style="
                         position: absolute;
@@ -1977,16 +1984,16 @@
 
     function renderSettingsTab(container) {
         loadSettings();
-
+        
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">URL Google Apps Script Web App:</label>
-                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..."
+                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..." 
                         style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                     <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
                 </div>
-
+                
                 <button id="save-webapp-url-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -2000,9 +2007,9 @@
                     font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                     margin-bottom: 20px;
                 ">Сохранить URL</button>
-
+                
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-
+                
                 <button id="sync-google-sheet-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -2018,7 +2025,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из Google Таблицы</button>
-
+                
                 <button id="sync-amocrm-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -2034,7 +2041,7 @@
                     box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из amoCRM</button>
-
+                
                 <button id="sync-amocrm-to-google-btn" style="
                     width: 100%;
                     padding: 12px;
@@ -2081,9 +2088,9 @@
                     </div>
                     <div style="margin-top: 15px; font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
                 </div>
-
+                
                 <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
-
+                
                 <div style="background: ${isAdminAuthorized ? '#d4edda' : '#fff3e0'}; padding: 20px; border-radius: 8px; border-left: 4px solid ${isAdminAuthorized ? '#4CAF50' : '#FF9800'};">
                     <h3 style="margin: 0 0 15px 0; font-size: 16px; color: ${isAdminAuthorized ? '#155724' : '#E65100'}; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                         ${isAdminAuthorized ? '✅ Режим администратора' : '🔒 Защита данных'}
@@ -2128,7 +2135,7 @@
         `;
 
         document.getElementById('save-webapp-url-btn').onclick = saveWebAppUrl;
-
+        
         const syncGoogleBtn = document.getElementById('sync-google-sheet-btn');
         syncGoogleBtn.onclick = () => syncWithGoogleSheet(false);
         syncGoogleBtn.onmouseover = () => {
@@ -2139,7 +2146,7 @@
             syncGoogleBtn.style.transform = 'translateY(0)';
             syncGoogleBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-
+        
         const syncAmoCRMBtn = document.getElementById('sync-amocrm-btn');
         syncAmoCRMBtn.onclick = () => syncWithAmoCRM(false);
         syncAmoCRMBtn.onmouseover = () => {
@@ -2267,7 +2274,7 @@
             <h3 style="margin: 0 0 20px 0; font-size: 20px; color: #333; text-align: center; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                 🔐 Код администратора
             </h3>
-            <input type="password" id="admin-password-input" placeholder="Введите код"
+            <input type="password" id="admin-password-input" placeholder="Введите код" 
                 style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; margin-bottom: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; text-align: center; letter-spacing: 3px;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                 <button id="cancel-password-btn" style="
@@ -2350,7 +2357,7 @@
 
         try {
             await syncWithGoogleSheet(true);
-
+            
             const promo = promoCodesCache.find(p => p.code.toUpperCase() === code);
 
             if (!promo) {
@@ -2361,10 +2368,10 @@
             const validation = validatePromoCode(promo, phone, orderAmount);
 
             if (validation.valid) {
-                const discountText = promo.discountType === 'процент'
-                    ? `${promo.discount}%`
+                const discountText = promo.discountType === 'процент' 
+                    ? `${promo.discount}%` 
                     : `${promo.discount} ₽`;
-
+                
                 let detailsHtml = `
                     <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #FFB8D1;">Промокод активен!</div>
                     <div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Скидка:</strong> ${discountText}</div>
@@ -2425,7 +2432,7 @@
             const expiry = new Date(promo.expiryDate);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-
+            
             if (expiry < today) {
                 return { valid: false, reason: `Срок действия истек ${formatDate(promo.expiryDate)}` };
             }
@@ -2480,8 +2487,8 @@
             }
             const leadId = leadIdMatch[1];
 
-            const promoEnumItem = amoCRMPromoCodes.find(p =>
-                p.value.toUpperCase() === promo.code.toUpperCase() ||
+            const promoEnumItem = amoCRMPromoCodes.find(p => 
+                p.value.toUpperCase() === promo.code.toUpperCase() || 
                 p.value.toUpperCase().startsWith(promo.code.toUpperCase())
             );
 
@@ -2614,7 +2621,7 @@
             }
         } else if (target === 'amocrm') {
             showResult(resultDiv, 'Добавляю промокод в amoCRM...', 'info');
-
+            
             try {
                 await addPromoCodeToAmoCRM(code);
                 showResult(resultDiv, 'Промокод успешно добавлен в amoCRM!', 'success');
@@ -2667,15 +2674,15 @@
 
         const existingEnums = fieldData.enums || [];
         console.log('Существующие промокоды:', existingEnums.length);
-
+        
         const enumExists = existingEnums.some(e => e.value.toUpperCase() === code.toUpperCase());
         if (enumExists) {
             console.warn('Промокод уже существует');
             throw new Error('Промокод уже существует в amoCRM');
         }
 
-        const maxSort = existingEnums.length > 0
-            ? Math.max(...existingEnums.map(e => e.sort || 0))
+        const maxSort = existingEnums.length > 0 
+            ? Math.max(...existingEnums.map(e => e.sort || 0)) 
             : 0;
 
         const newEnums = [
@@ -2779,7 +2786,7 @@
                 promoCodesCache = response.promoCodes;
                 cachePromoCodes(promoCodesCache);
                 updateStatistics();
-
+                
                 const activeTab = document.querySelector('.promo-tab.active');
                 if (activeTab && activeTab.dataset.tab === 'list') {
                     const googleList = document.getElementById('google-promos-list');
@@ -2788,7 +2795,7 @@
                         attachDeleteButtonsListeners();
                     }
                 }
-
+                
                 if (!silent) showNotification(`Загружено ${promoCodesCache.length} промокодов из Google Таблицы`, 'success');
             }
         } catch (error) {
@@ -2799,14 +2806,14 @@
 
     function parseAmoCRMPromoCode(value) {
         const bracketMatch = value.match(/^(.+?)\s*\((.+)\)$/);
-
+        
         if (bracketMatch) {
             return {
                 code: bracketMatch[1].trim(),
                 description: bracketMatch[2].trim()
             };
         }
-
+        
         return {
             code: value.trim(),
             description: ''
@@ -2839,12 +2846,12 @@
                     value: e.value,
                     sort: e.sort
                 }));
-
+                
                 cacheAmoCRMPromoCodes(amoCRMPromoCodes);
-
+                
                 if (!silent) showNotification(`Загружено ${amoCRMPromoCodes.length} промокодов из amoCRM`, 'success');
                 updateStatistics();
-
+                
                 const activeTab = document.querySelector('.promo-tab.active');
                 if (activeTab && activeTab.dataset.tab === 'list') {
                     const amoCRMList = document.getElementById('amocrm-promos-list');
@@ -2853,7 +2860,7 @@
                         attachDeleteButtonsListeners();
                     }
                 }
-
+                
                 if (webAppUrl && amoCRMPromoCodes.length > 0 && !silent) {
                     await syncAmoCRMToGoogleSheets();
                 }
@@ -2871,7 +2878,7 @@
 
         try {
             showNotification('Синхронизирую промокоды с Google Таблицей...', 'info');
-
+            
             const formattedPromoCodes = amoCRMPromoCodes.map(promo => {
                 const parsed = parseAmoCRMPromoCode(promo.value);
                 return {
@@ -2896,10 +2903,10 @@
 
             if (response.success) {
                 showNotification(
-                    `${response.message}`,
+                    `${response.message}`, 
                     'success'
                 );
-
+                
                 await syncWithGoogleSheet(true);
             } else {
                 showNotification('Ошибка синхронизации с Google Таблицей', 'warning');
@@ -3001,6 +3008,519 @@
         return null;
     }
 
+    // ==================== Аналитика применения промокодов ====================
+    // Источник данных - живой поиск сделок в amoCRM по значению поля промокода
+    // (PROMO_FIELD_ID). Ничего не пишем в Google Sheets, только читаем API amoCRM.
+
+    // Единый шрифт интерфейса (как в остальном скрипте)
+    const AN_FONT = `'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif`;
+    // Системные статусы amoCRM: 142 - успешно реализовано, 143 - закрыто и не реализовано
+    const AMO_STATUS_WON = 142;
+    const AMO_STATUS_LOST = 143;
+
+    // --- Кэш воронок (соответствие status_id -> название этапа, основная воронка)
+    function cachePipelines(obj) {
+        try {
+            localStorage.setItem('promo_pipelines_cache_v1', JSON.stringify({ ts: Date.now(), data: obj }));
+        } catch (e) {
+            console.error('Ошибка кэширования воронок:', e);
+        }
+    }
+
+    function getCachedPipelines() {
+        try {
+            const raw = localStorage.getItem('promo_pipelines_cache_v1');
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (parsed && (Date.now() - parsed.ts < CACHE_DURATION)) return parsed.data;
+        } catch (e) {
+            console.error('Ошибка чтения кэша воронок:', e);
+        }
+        return null;
+    }
+
+    // --- Кэш результатов аналитики промокодов
+    function cachePromoAnalytics(obj) {
+        try {
+            localStorage.setItem('promo_analytics_cache_v1', JSON.stringify(obj));
+        } catch (e) {
+            console.error('Ошибка кэширования аналитики промокодов:', e);
+        }
+    }
+
+    function getCachedPromoAnalytics() {
+        try {
+            const raw = localStorage.getItem('promo_analytics_cache_v1');
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (e) {
+            console.error('Ошибка чтения кэша аналитики промокодов:', e);
+        }
+        return null;
+    }
+
+    // Получаем основную воронку и карту статусов (одним запросом, кэш 10 мин)
+    async function getMainPipelineAndStatuses() {
+        const cached = getCachedPipelines();
+        if (cached) return cached;
+
+        const domain = window.location.hostname;
+        const resp = await fetch(`https://${domain}/api/v4/leads/pipelines`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} (воронки)`);
+        const data = await resp.json();
+        const pipelines = (data && data._embedded && data._embedded.pipelines) || [];
+        const main = pipelines.find(p => p.is_main) || pipelines[0];
+
+        const statusMap = {};
+        if (main && main._embedded && main._embedded.statuses) {
+            main._embedded.statuses.forEach(s => { statusMap[s.id] = s.name; });
+        }
+        // Подписываем системные статусы, если их нет в карте воронки
+        if (!statusMap[AMO_STATUS_WON]) statusMap[AMO_STATUS_WON] = 'Успешно реализовано';
+        if (!statusMap[AMO_STATUS_LOST]) statusMap[AMO_STATUS_LOST] = 'Закрыто и не реализовано';
+
+        const result = {
+            mainPipelineId: main ? main.id : null,
+            pipelineName: main ? main.name : '',
+            statusMap
+        };
+        cachePipelines(result);
+        return result;
+    }
+
+    // Проходим все страницы выдачи /api/v4/leads по baseUrl
+    async function fetchLeadsPaged(baseUrl) {
+        const leads = [];
+        let page = 1;
+        while (true) {
+            const url = baseUrl + `&page=${page}`;
+            const resp = await fetch(url, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (resp.status === 204) break;            // нет данных
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const batch = (data && data._embedded && data._embedded.leads) || [];
+            leads.push(...batch);
+            if (!data || !data._links || !data._links.next) break;   // последняя страница
+            page++;
+            if (page > 40) break;                       // предохранитель (40*250=10000)
+        }
+        return leads;
+    }
+
+    // Проверка: у сделки в поле промокода реально стоит нужный enum_id
+    function leadHasPromoEnum(lead, enumId) {
+        const cf = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
+        if (!cf || !cf.values) return false;
+        return cf.values.some(v => String(v.enum_id) === String(enumId));
+    }
+
+    // Strategy A: точечный запрос сделок по значению select-поля промокода
+    async function fetchLeadsByPromoValue(value, period, mainId) {
+        const domain = window.location.hostname;
+        let base = `https://${domain}/api/v4/leads?filter[custom_fields_values][${PROMO_FIELD_ID}][]=${encodeURIComponent(value)}`;
+        if (mainId) base += `&filter[pipeline_id]=${mainId}`;
+        if (period && period.from) base += `&filter[created_at][from]=${period.from}`;
+        if (period && period.to) base += `&filter[created_at][to]=${period.to}`;
+        base += `&order[created_at]=desc&limit=250`;
+        return await fetchLeadsPaged(base);
+    }
+
+    // Strategy B (fallback): один проход по основной воронке, группировка по enum_id
+    async function fetchAllMainPipelineLeadsGrouped(period, mainId) {
+        const domain = window.location.hostname;
+        let base = `https://${domain}/api/v4/leads?limit=250`;
+        if (mainId) base += `&filter[pipeline_id]=${mainId}`;
+        if (period && period.from) base += `&filter[created_at][from]=${period.from}`;
+        if (period && period.to) base += `&filter[created_at][to]=${period.to}`;
+        base += `&order[created_at]=desc`;
+        const leads = await fetchLeadsPaged(base);
+
+        const grouped = {};
+        leads.forEach(lead => {
+            const cf = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
+            if (!cf || !cf.values || !cf.values.length) return;
+            const enumId = cf.values[0].enum_id;
+            if (enumId == null) return;
+            (grouped[enumId] = grouped[enumId] || []).push(lead);
+        });
+        return grouped;
+    }
+
+    // Оставляем в кэше только нужные поля сделки
+    function pickLeadFields(lead) {
+        return {
+            id: lead.id,
+            name: lead.name || ('Сделка ' + lead.id),
+            price: Number(lead.price) || 0,
+            created_at: lead.created_at,
+            status_id: lead.status_id,
+            pipeline_id: lead.pipeline_id
+        };
+    }
+
+    // Метрики по одному коду
+    function computeCodeMetrics(leads) {
+        const count = leads.length;
+        const sumBudget = leads.reduce((s, l) => s + (Number(l.price) || 0), 0);
+        const won = leads.filter(l => l.status_id === AMO_STATUS_WON).length;
+        const conversion = count ? (won / count) * 100 : 0;
+        return { count, sumBudget, won, conversion };
+    }
+
+    // Оркестратор: строит аналитику по всем кодам, с авто-переключением на fallback
+    async function buildPromoAnalytics(period) {
+        const pinfo = await getMainPipelineAndStatuses();
+        const mainId = pinfo.mainPipelineId;
+        const codes = amoCRMPromoCodes || [];
+        const result = {
+            ts: Date.now(),
+            period,
+            mainPipelineId: mainId,
+            pipelineName: pinfo.pipelineName,
+            statusMap: pinfo.statusMap,
+            byCode: {},
+            strategy: 'A'
+        };
+        if (codes.length === 0) { cachePromoAnalytics(result); return result; }
+
+        let fallback = false;
+        let sanityFailed = false;
+        const rawByCode = {};
+        const CONCURRENCY = 4;
+
+        try {
+            for (let i = 0; i < codes.length; i += CONCURRENCY) {
+                const slice = codes.slice(i, i + CONCURRENCY);
+                const settled = await Promise.all(slice.map(async c => ({
+                    c,
+                    leads: await fetchLeadsByPromoValue(c.value, period, mainId)
+                })));
+                settled.forEach(({ c, leads }) => {
+                    rawByCode[c.id] = leads;
+                    // Если вернулись сделки, но ни одна не содержит нужный enum_id - фильтр «врёт»
+                    if (leads.length > 0 && !leads.some(l => leadHasPromoEnum(l, c.id))) {
+                        sanityFailed = true;
+                    }
+                });
+                updateAnalyticsProgress(Math.min(i + CONCURRENCY, codes.length), codes.length, 'Загружаю сделки по кодам');
+            }
+            if (sanityFailed) fallback = true;
+        } catch (e) {
+            console.warn('[Аналитика промокодов] Strategy A не сработала, переключаюсь на fallback:', e);
+            fallback = true;
+        }
+
+        const byCode = {};
+        if (fallback) {
+            updateAnalyticsProgress(0, 0, 'Полный обход основной воронки');
+            const grouped = await fetchAllMainPipelineLeadsGrouped(period, mainId);
+            codes.forEach(c => {
+                byCode[c.id] = { code: c.value, enumId: c.id, leads: (grouped[c.id] || []).map(pickLeadFields) };
+            });
+            result.strategy = 'B';
+        } else {
+            codes.forEach(c => {
+                byCode[c.id] = { code: c.value, enumId: c.id, leads: (rawByCode[c.id] || []).map(pickLeadFields) };
+            });
+        }
+        result.byCode = byCode;
+        cachePromoAnalytics(result);
+        return result;
+    }
+
+    // Определяем активный период фильтра -> строки дат и unix-границы (секунды)
+    function getPromoAnalyticsPeriod() {
+        const active = document.querySelector('.promo-an-period-btn.active');
+        const key = active ? active.dataset.period : 'month';
+        let startStr, endStr;
+        const today = new Date();
+
+        if (key === 'today') {
+            startStr = formatDateForInput(today);
+            endStr = startStr;
+        } else if (key === 'week') {
+            const d = new Date(today);
+            d.setDate(today.getDate() - 7);
+            startStr = formatDateForInput(d);
+            endStr = formatDateForInput(today);
+        } else if (key === 'custom') {
+            startStr = document.getElementById('promo-an-start')?.value;
+            endStr = document.getElementById('promo-an-end')?.value;
+        } else {
+            // month (по умолчанию)
+            const d = new Date(today);
+            d.setMonth(today.getMonth() - 1);
+            startStr = formatDateForInput(d);
+            endStr = formatDateForInput(today);
+        }
+
+        const from = startStr ? Math.floor(new Date(startStr + 'T00:00:00').getTime() / 1000) : null;
+        const to = endStr ? Math.floor(new Date(endStr + 'T23:59:59').getTime() / 1000) : null;
+        return { key, startStr, endStr, from, to };
+    }
+
+    // HTML блока аналитики (вставляется в renderListTab только для админа)
+    function renderPromoAnalyticsBlockHtml() {
+        const today = new Date();
+        const todayStr = formatDateForInput(today);
+        const monthAgo = new Date(today);
+        monthAgo.setMonth(today.getMonth() - 1);
+        const monthAgoStr = formatDateForInput(monthAgo);
+
+        const mkPeriodBtn = (key, label, active) => `
+            <button class="promo-an-period-btn${active ? ' active' : ''}" data-period="${key}" style="
+                padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; font-family: ${AN_FONT}; transition: all 0.2s;
+                background: ${active ? 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)' : '#fff'};
+                color: ${active ? 'white' : '#666'};">${label}</button>`;
+
+        return `
+            <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
+            <div id="promo-analytics-section" style="background: linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius: 12px; padding: 20px; border: 2px solid #FFB8D1;">
+                <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #FF69B4; font-family: ${AN_FONT}; display: flex; align-items: center; gap: 10px;">
+                    📊 Аналитика применения промокодов
+                    <button id="refresh-promo-analytics-btn" style="padding: 5px 12px; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">🔄 Обновить</button>
+                </h3>
+                <div style="font-size: 13px; color: #666; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM (по основной воронке), включая коды без описания.</div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
+                    ${mkPeriodBtn('today', 'Сегодня', false)}
+                    ${mkPeriodBtn('week', 'Неделя', false)}
+                    ${mkPeriodBtn('month', 'Месяц', true)}
+                    ${mkPeriodBtn('custom', 'Произвольный', false)}
+                </div>
+                <div id="promo-an-custom-block" style="display: none; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#666; font-family:${AN_FONT};">Начало:</label>
+                        <input type="date" id="promo-an-start" value="${monthAgoStr}" style="width:100%; padding:10px; border:2px solid #FFD4E5; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
+                    </div>
+                    <div>
+                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#666; font-family:${AN_FONT};">Конец:</label>
+                        <input type="date" id="promo-an-end" value="${todayStr}" style="width:100%; padding:10px; border:2px solid #FFD4E5; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
+                    </div>
+                </div>
+                <button id="load-promo-analytics-btn" style="width:100%; padding:12px; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color:white; border:none; border-radius:8px; cursor:pointer; font-size:15px; font-weight:bold; font-family:${AN_FONT};">Загрузить аналитику</button>
+                <div id="promo-analytics-progress" style="margin-top:12px; font-size:13px; color:#FF69B4; font-family:${AN_FONT}; text-align:center;"></div>
+                <div id="promo-analytics-summary" style="margin-top:15px;"></div>
+                <div id="promo-analytics-details" style="margin-top:15px;"></div>
+            </div>`;
+    }
+
+    // Подсветка активной кнопки периода (используется при отрисовке из кэша)
+    function setActivePromoPeriodButton(key) {
+        const buttons = document.querySelectorAll('.promo-an-period-btn');
+        buttons.forEach(b => {
+            const on = b.dataset.period === key;
+            b.classList.toggle('active', on);
+            b.style.background = on ? 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)' : '#fff';
+            b.style.color = on ? 'white' : '#666';
+        });
+        const customBlock = document.getElementById('promo-an-custom-block');
+        if (customBlock) customBlock.style.display = (key === 'custom') ? 'grid' : 'none';
+    }
+
+    // Навешиваем обработчики блока аналитики
+    function initPromoAnalyticsBlock() {
+        const section = document.getElementById('promo-analytics-section');
+        if (!section) return;
+
+        const periodButtons = section.querySelectorAll('.promo-an-period-btn');
+        periodButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                periodButtons.forEach(b => {
+                    b.classList.remove('active');
+                    b.style.background = '#fff';
+                    b.style.color = '#666';
+                });
+                btn.classList.add('active');
+                btn.style.background = 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)';
+                btn.style.color = 'white';
+                const customBlock = document.getElementById('promo-an-custom-block');
+                if (customBlock) customBlock.style.display = (btn.dataset.period === 'custom') ? 'grid' : 'none';
+            });
+        });
+
+        const loadBtn = document.getElementById('load-promo-analytics-btn');
+        if (loadBtn) loadBtn.onclick = () => loadPromoAnalytics(true);
+        const refreshBtn = document.getElementById('refresh-promo-analytics-btn');
+        if (refreshBtn) refreshBtn.onclick = () => loadPromoAnalytics(true);
+
+        // При наличии свежего кэша сразу показываем данные (без запроса)
+        loadPromoAnalytics(false);
+    }
+
+    // Обновление строки прогресса
+    function updateAnalyticsProgress(done, total, label) {
+        const el = document.getElementById('promo-analytics-progress');
+        if (!el) return;
+        if (!total && !label) { el.textContent = ''; return; }
+        if (total) el.textContent = `⏳ ${label || 'Загрузка'}: ${done} из ${total}...`;
+        else el.textContent = `⏳ ${label || 'Загрузка'}...`;
+    }
+
+    // Главная точка входа блока: грузит из кэша или запрашивает заново
+    async function loadPromoAnalytics(forceRefresh) {
+        const summaryEl = document.getElementById('promo-analytics-summary');
+        const detailsEl = document.getElementById('promo-analytics-details');
+        if (!summaryEl) return;
+        if (detailsEl) detailsEl.innerHTML = '';
+
+        const period = getPromoAnalyticsPeriod();
+        if (period.key === 'custom' && (!period.from || !period.to)) {
+            showNotification('Укажите даты произвольного периода', 'warning');
+            return;
+        }
+
+        // Попытка отдать из кэша (только если период совпадает и кэш свежий)
+        if (!forceRefresh) {
+            const cached = getCachedPromoAnalytics();
+            if (cached && (Date.now() - cached.ts < CACHE_DURATION) && cached.period &&
+                cached.period.key === period.key && cached.period.startStr === period.startStr &&
+                cached.period.endStr === period.endStr) {
+                setActivePromoPeriodButton(cached.period.key);
+                renderPromoSummaryTable(cached);
+                updateAnalyticsProgress(0, 0);
+                return;
+            }
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#999; font-family:${AN_FONT}; font-size:14px;">Нажмите «Загрузить аналитику» для просмотра статистики по промокодам</div>`;
+            return;
+        }
+
+        if (!amoCRMPromoCodes || amoCRMPromoCodes.length === 0) {
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#E65100; font-family:${AN_FONT}; font-size:14px;">Промокоды из amoCRM не загружены. Откройте «Настройки» и синхронизируйте промокоды.</div>`;
+            return;
+        }
+
+        updateAnalyticsProgress(0, amoCRMPromoCodes.length, 'Загружаю сделки по кодам');
+        try {
+            const analytics = await buildPromoAnalytics(period);
+            updateAnalyticsProgress(0, 0);
+            renderPromoSummaryTable(analytics);
+            const totalLeads = Object.values(analytics.byCode).reduce((s, c) => s + c.leads.length, 0);
+            showNotification(`Аналитика промокодов загружена: сделок ${totalLeads}`, 'success');
+        } catch (e) {
+            console.error('[Аналитика промокодов] Ошибка:', e);
+            updateAnalyticsProgress(0, 0);
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#c62828; font-family:${AN_FONT}; font-size:14px;">Ошибка загрузки: ${e.message}</div>`;
+            showNotification('Ошибка загрузки аналитики промокодов', 'error');
+        }
+    }
+
+    // Сводная таблица по всем кодам (строки кликабельны -> детализация)
+    function renderPromoSummaryTable(analytics) {
+        const summaryEl = document.getElementById('promo-analytics-summary');
+        if (!summaryEl) return;
+
+        const rows = Object.values(analytics.byCode)
+            .map(c => ({ ...c, metrics: computeCodeMetrics(c.leads) }))
+            .filter(c => c.metrics.count > 0)
+            .sort((a, b) => b.metrics.count - a.metrics.count);
+
+        const zeroCount = Object.keys(analytics.byCode).length - rows.length;
+        const totalApplies = rows.reduce((s, c) => s + c.metrics.count, 0);
+        const totalBudget = rows.reduce((s, c) => s + c.metrics.sumBudget, 0);
+
+        if (rows.length === 0) {
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#999; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодами не найдено</div>`;
+            return;
+        }
+
+        const rowsHtml = rows.map(c => {
+            const m = c.metrics;
+            const parsed = parseAmoCRMPromoCode(c.code);
+            return `
+                <tr class="promo-an-row" data-enum-id="${c.enumId}" style="cursor:pointer; border-bottom:1px solid #FFD4E5; transition:background 0.15s;" onmouseover="this.style.background='#FFF0F5'" onmouseout="this.style.background='transparent'">
+                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:#333; font-weight:600;">${parsed.code}${parsed.description ? ` <span style="color:#999; font-weight:400;">(${parsed.description})</span>` : ''}</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#FF1493; font-weight:bold;">${m.count}</td>
+                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#333;">${m.sumBudget.toLocaleString('ru-RU')} ₽</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:13px; color:#2e7d32;">${m.conversion.toFixed(1)}% <span style="color:#999; font-size:11px;">(${m.won}/${m.count})</span></td>
+                </tr>`;
+        }).join('');
+
+        summaryEl.innerHTML = `
+            <div style="background:white; border-radius:10px; padding:12px; border:2px solid #FFD4E5;">
+                <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#666;">
+                    <span>Воронка: <strong style="color:#FF69B4;">${analytics.pipelineName || '-'}</strong></span>
+                    <span>Кодов с применением: <strong style="color:#FF69B4;">${rows.length}</strong></span>
+                    <span>Всего применений: <strong style="color:#FF69B4;">${totalApplies}</strong></span>
+                    <span>Сумма бюджетов: <strong style="color:#FF69B4;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
+                </div>
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #FFB8D1;">
+                            <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Промокод</th>
+                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Применений</th>
+                            <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Сумма бюджетов</th>
+                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Конверсия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+                ${zeroCount > 0 ? `<div style="margin-top:8px; font-size:11px; color:#999; font-family:${AN_FONT};">Кодов без применений за период: ${zeroCount}</div>` : ''}
+                <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки${analytics.strategy === 'B' ? ' • режим полного обхода воронки' : ''}</div>
+            </div>`;
+
+        summaryEl.querySelectorAll('.promo-an-row').forEach(row => {
+            row.addEventListener('click', () => renderPromoCodeDetails(row.dataset.enumId, analytics));
+        });
+    }
+
+    // Детализация: список сделок конкретного кода со ссылками
+    function renderPromoCodeDetails(enumId, analytics) {
+        const detailsEl = document.getElementById('promo-analytics-details');
+        if (!detailsEl) return;
+
+        const entry = analytics.byCode[enumId];
+        if (!entry) { detailsEl.innerHTML = ''; return; }
+
+        const domain = window.location.hostname;
+        const statusMap = analytics.statusMap || {};
+        const parsed = parseAmoCRMPromoCode(entry.code);
+        const leads = (entry.leads || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+
+        if (leads.length === 0) {
+            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#999; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
+            return;
+        }
+
+        const items = leads.map(l => {
+            const url = `https://${domain}/leads/detail/${l.id}`;
+            const stage = statusMap[l.status_id] || ('Этап ' + l.status_id);
+            const isWon = l.status_id === AMO_STATUS_WON;
+            const isLost = l.status_id === AMO_STATUS_LOST;
+            const stageColor = isWon ? '#2e7d32' : isLost ? '#c62828' : '#FF9800';
+            const dateStr = l.created_at ? formatDate(l.created_at * 1000) : '';
+            return `
+                <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
+                        <div style="flex:1;">
+                            <div style="font-size:14px; font-family:${AN_FONT};">💼 <a href="${url}" target="_blank" style="color:#FF69B4; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:12px; color:#666; font-family:${AN_FONT}; margin-top:4px;">📊 ${stage} • 🗂 ${analytics.pipelineName || ''}</div>
+                            <div style="font-size:11px; color:#999; font-family:${AN_FONT}; margin-top:3px;">🗓 ${dateStr}</div>
+                        </div>
+                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#333; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        detailsEl.innerHTML = `
+            <div style="background:linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius:10px; padding:15px; border:2px solid #FFB8D1;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h4 style="margin:0; font-size:15px; color:#FF69B4; font-family:${AN_FONT};">Сделки по коду «${parsed.code}» (${leads.length})</h4>
+                    <button id="promo-an-close-details" style="background:#FF69B4; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
+                </div>
+                <div style="max-height:400px; overflow-y:auto;">${items}</div>
+            </div>`;
+
+        const closeBtn = document.getElementById('promo-an-close-details');
+        if (closeBtn) closeBtn.onclick = () => { detailsEl.innerHTML = ''; };
+        detailsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
     async function updateUsageCounter(code, phone, leadUrl) {
         if (!webAppUrl) {
             console.warn('[Промокоды] updateUsageCounter: webAppUrl не настроен');
@@ -3044,12 +3564,12 @@
 
     async function deleteGooglePromoCode(code) {
         console.log('deleteGooglePromoCode вызвана с кодом:', code);
-
+        
         if (!isAdminAuthorized) {
             showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
-
+        
         if (!confirm(`Вы уверены, что хотите удалить промокод "${code}" из Google Таблицы?`)) {
             console.log('Пользователь отменил удаление');
             return;
@@ -3075,9 +3595,9 @@
             if (response.success) {
                 promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== code.toUpperCase());
                 cachePromoCodes(promoCodesCache);
-
+                
                 showNotification('Промокод удален из Google Таблицы!', 'success');
-
+                
                 switchTab('list');
             } else {
                 console.error('Ошибка от сервера:', response.error);
@@ -3094,7 +3614,7 @@
             showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
-
+        
         if (!confirm(`Вы уверены, что хотите удалить промокод "${code}"?\n\nВнимание: Промокод будет удален из amoCRM и Google Таблицы.`)) {
             return;
         }
@@ -3141,13 +3661,13 @@
             if (webAppUrl) {
                 const parsed = parseAmoCRMPromoCode(code);
                 const cleanCode = parsed.code;
-
+                
                 try {
                     const deleteFromGoogleResponse = await makeGoogleScriptRequest('POST', {
                         action: 'delete',
                         code: cleanCode
                     });
-
+                    
                     if (deleteFromGoogleResponse.success) {
                         console.log('Промокод также удален из Google Таблицы');
                         promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== cleanCode.toUpperCase());
@@ -3157,9 +3677,9 @@
                     console.warn('Не удалось удалить промокод из Google Таблицы:', googleError);
                 }
             }
-
+            
             showNotification('Промокод удален из amoCRM и Google Таблицы!', 'success');
-
+            
             switchTab('list');
 
         } catch (error) {
@@ -3170,16 +3690,16 @@
 
     function loadCurrentBonusPoints() {
         const bonusInput = document.querySelector(`input[name="CFV[${BONUS_FIELD_ID}]"]`);
-
+        
         if (bonusInput && bonusInput.value) {
             currentBonusPoints = parseFloat(bonusInput.value) || 0;
         } else {
             currentBonusPoints = 0;
         }
-
+        
         const firstNameInput = document.querySelector('input[name="contact[FN]"]');
         const lastNameInput = document.querySelector('input[name="contact[LN]"]');
-
+        
         if (firstNameInput || lastNameInput) {
             const firstName = firstNameInput?.value || '';
             const lastName = lastNameInput?.value || '';
@@ -3187,7 +3707,7 @@
         } else {
             currentContactName = 'Без имени';
         }
-
+        
         const leadIdMatch = window.location.href.match(/\/leads\/detail\/(\d+)/);
         if (leadIdMatch) {
             const leadId = leadIdMatch[1];
@@ -3199,7 +3719,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/leads/${leadId}?with=contacts`;
-
+            
             const response = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
@@ -3226,7 +3746,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${currentContactId}`;
-
+            
             const response = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
@@ -3286,7 +3806,7 @@
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${currentContactId}`;
-
+            
             const payload = {
                 custom_fields_values: [
                     {
@@ -3310,34 +3830,34 @@
 
             if (response.ok) {
                 currentBonusPoints = newBalance;
-
+                
                 const displayElement = document.getElementById('current-bonus-display');
                 if (displayElement) {
                     displayElement.textContent = newBalance.toFixed(2);
                 }
-
+                
                 const contactInfoElement = document.getElementById('contact-info');
                 if (contactInfoElement && currentContactName) {
                     contactInfoElement.textContent = currentContactName;
                 }
-
+                
                 const domInput = document.querySelector(`input[name="CFV[${BONUS_FIELD_ID}]"]`);
                 if (domInput) {
                     domInput.value = newBalance.toFixed(2);
                 }
-
+                
                 pointsInput.value = '';
-
+                
                 const actionText = action === 'add' ? 'начислено' : 'списано';
                 showResult(resultDiv, `Успешно ${actionText} ${points.toFixed(2)} баллов. Новый баланс: ${newBalance.toFixed(2)}`, 'success');
-
+                
                 showNotification(`Баллы успешно ${actionText}!`, 'success');
-
+                
                 const transactionType = action === 'add' ? 'начисление' : 'списание';
                 const leadIdMatch = window.location.href.match(/\/leads\/detail\/(\d+)/);
                 const leadId = leadIdMatch ? leadIdMatch[1] : '';
                 const leadName = document.querySelector('.card-name__name')?.textContent || '';
-
+                
                 await logBonusTransaction(transactionType, points, currentContactId, currentContactName, leadId, leadName, 'админ');
             } else {
                 const errorText = await response.text();
@@ -3358,22 +3878,22 @@
                 <div style="font-size: 14px;">Нажмите "Синхронизировать" чтобы загрузить заявки из Google Таблицы</div>
             </div>`;
         }
-
+        
         return bonusRequestsCache.map(request => {
             const statusColors = {
                 'ожидает': { bg: '#fff3cd', text: '#856404', icon: '⏳' },
                 'одобрено': { bg: '#d4edda', text: '#155724', icon: '✅' },
                 'отклонено': { bg: '#f8d7da', text: '#721c24', icon: '❌' }
             };
-
+            
             const statusStyle = statusColors[request.status] || statusColors['ожидает'];
-
+            
             return `
                 <div style="background: #f9f9f9; border: 2px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                         <div style="flex: 1;">
                             <div style="font-size: 16px; font-weight: bold; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-bottom: 5px;">
-                                ${request.contactName || 'Без имени'}
+                                ${request.contactName || 'Без имени'} 
                                 <span style="font-size: 20px; color: #FFB8D1; margin-left: 10px;">+${request.points}</span>
                             </div>
                             <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3384,13 +3904,13 @@
                             ${statusStyle.icon} ${request.status}
                         </div>
                     </div>
-
+                    
                     <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
                         <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                             <strong>Причина:</strong> ${request.reason}
                         </div>
                     </div>
-
+                    
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <a href="${request.leadUrl}" target="_blank" style="
                             font-size: 12px;
@@ -3399,7 +3919,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             font-weight: 600;
                         ">🔗 Перейти в сделку</a>
-
+                        
                         ${isAdminAuthorized && request.status === 'ожидает' ? `
                             <div style="display: flex; gap: 10px;">
                                 <button class="approve-request-btn" data-request-id="${request.requestId}" data-contact-id="${request.contactId}" data-points="${request.points}" style="
@@ -3414,7 +3934,7 @@
                                     font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                                     transition: all 0.2s;
                                 ">✅ Одобрить</button>
-
+                                
                                 <button class="reject-request-btn" data-request-id="${request.requestId}" style="
                                     padding: 8px 16px;
                                     background: #FF5252;
@@ -3434,11 +3954,11 @@
             `;
         }).join('');
     }
-
+    
     function attachBonusRequestsButtonsListeners() {
         const approveButtons = document.querySelectorAll('.approve-request-btn');
         const rejectButtons = document.querySelectorAll('.reject-request-btn');
-
+        
         approveButtons.forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -3448,7 +3968,7 @@
                 await approveBonusRequest(requestId, contactId, points);
             });
         });
-
+        
         rejectButtons.forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -3479,12 +3999,12 @@
     function renderAnalyticsTab(container) {
         const today = new Date();
         const todayStr = formatDateForInput(today);
-
+        
         container.innerHTML = `
             <div style="max-width: 1000px; margin: 0 auto;">
                 <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 2px solid #e0e0e0;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Выберите период и фильтры</h3>
-
+                    
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px;">
                         <button class="period-btn" data-period="today" style="
                             padding: 12px;
@@ -3498,7 +4018,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Сегодня</button>
-
+                        
                         <button class="period-btn" data-period="week" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3511,7 +4031,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Неделя</button>
-
+                        
                         <button class="period-btn" data-period="month" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3524,7 +4044,7 @@
                             font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
                             transition: all 0.2s;
                         ">Месяц</button>
-
+                        
                         <button class="period-btn" data-period="custom" style="
                             padding: 12px;
                             background: #f5f5f5;
@@ -3538,7 +4058,7 @@
                             transition: all 0.2s;
                         ">Произвольный</button>
                     </div>
-
+                    
                     <div style="margin-bottom: 20px;">
                         <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Источник:</label>
                         <select id="source-filter" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3547,7 +4067,7 @@
                             <option value="админ">👤 Ручные (Администратор)</option>
                         </select>
                     </div>
-
+                    
                     <div id="custom-period-block" style="display: none; margin-bottom: 20px;">
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div>
@@ -3562,7 +4082,7 @@
                             </div>
                         </div>
                     </div>
-
+                    
                     <button id="load-analytics-btn" style="
                         width: 100%;
                         padding: 15px;
@@ -3578,7 +4098,7 @@
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Загрузить аналитику</button>
                 </div>
-
+                
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
                     <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Начислено</div>
@@ -3587,7 +4107,7 @@
                         </div>
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-added-rub">0 ₽</div>
                     </div>
-
+                    
                     <div style="background: linear-gradient(135deg, #FF5252 0%, #E53935 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Списано</div>
                         <div id="total-subtracted-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3595,7 +4115,7 @@
                         </div>
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-subtracted-rub">0 ₽</div>
                     </div>
-
+                    
                     <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);">
                         <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Итого баллов</div>
                         <div id="total-balance-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
@@ -3604,7 +4124,7 @@
                         <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-balance-rub">0 ₽</div>
                     </div>
                 </div>
-
+                
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">⚡ Автоматические начисления (F5)</div>
@@ -3612,7 +4132,7 @@
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="f5-added-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-f5">Транзакций: 0</div>
                     </div>
-
+                    
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">👤 Ручные операции (Админ)</div>
                         <div id="admin-operations-display" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
@@ -3620,7 +4140,7 @@
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-admin">Транзакций: 0</div>
                     </div>
                 </div>
-
+                
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #4CAF50;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее начисление</div>
@@ -3628,7 +4148,7 @@
                         <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="avg-added-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-added">Транзакций: 0</div>
                     </div>
-
+                    
                     <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF5252;">
                         <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее списание</div>
                         <div id="avg-subtracted-display" style="font-size: 28px; font-weight: bold; color: #FF5252; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
@@ -3636,10 +4156,10 @@
                         <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-subtracted">Транзакций: 0</div>
                     </div>
                 </div>
-
+                
                 <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">История транзакций</h3>
-
+                    
                     <div id="analytics-transactions-list" style="max-height: 500px; overflow-y: auto;">
                         <div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
                             <div style="font-size: 48px; margin-bottom: 15px;">📊</div>
@@ -3649,7 +4169,7 @@
                 </div>
             </div>
         `;
-
+        
         const periodButtons = container.querySelectorAll('.period-btn');
         periodButtons.forEach(btn => {
             btn.addEventListener('click', () => {
@@ -3659,7 +4179,7 @@
                 });
                 btn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
                 btn.style.color = 'white';
-
+                
                 const customBlock = document.getElementById('custom-period-block');
                 if (btn.dataset.period === 'custom') {
                     customBlock.style.display = 'block';
@@ -3668,7 +4188,7 @@
                 }
             });
         });
-
+        
         const loadAnalyticsBtn = document.getElementById('load-analytics-btn');
         loadAnalyticsBtn.onclick = loadAnalytics;
         loadAnalyticsBtn.onmouseover = () => {
@@ -3679,7 +4199,7 @@
             loadAnalyticsBtn.style.transform = 'translateY(0)';
             loadAnalyticsBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
-
+        
         loadAnalytics();
     }
 
@@ -3688,13 +4208,13 @@
             showNotification('Настройте URL Google Apps Script', 'warning');
             return;
         }
-
+        
         const activePeriod = document.querySelector('.period-btn[style*="linear-gradient"]');
         const period = activePeriod ? activePeriod.dataset.period : 'today';
-
+        
         let startDate, endDate;
         const today = new Date();
-
+        
         if (period === 'today') {
             startDate = formatDateForInput(today);
             endDate = formatDateForInput(today);
@@ -3712,22 +4232,22 @@
             startDate = document.getElementById('custom-start-date').value;
             endDate = document.getElementById('custom-end-date').value;
         }
-
+        
         const sourceFilter = document.getElementById('source-filter')?.value || 'all';
-
+        
         console.log('Загружаю аналитику за период:', startDate, '-', endDate, 'Источник:', sourceFilter);
         showNotification('Загружаю аналитику...', 'info');
-
+        
         try {
-            const response = await makeGoogleScriptRequest('GET', {
+            const response = await makeGoogleScriptRequest('GET', { 
                 action: 'getAnalytics',
                 startDate: startDate,
                 endDate: endDate,
                 source: sourceFilter
             });
-
+            
             console.log('Ответ от сервера:', response);
-
+            
             if (response) {
                 if (response.debug) {
                     console.log('Debug info:', response.debug);
@@ -3753,7 +4273,7 @@
         const addedRubDisplay = document.getElementById('total-added-rub');
         const subtractedRubDisplay = document.getElementById('total-subtracted-rub');
         const balanceRubDisplay = document.getElementById('total-balance-rub');
-
+        
         if (addedDisplay) addedDisplay.textContent = analyticsCache.totalAdded.toFixed(2);
         if (subtractedDisplay) subtractedDisplay.textContent = analyticsCache.totalSubtracted.toFixed(2);
         if (balanceDisplay) {
@@ -3766,12 +4286,12 @@
             const balanceRub = analyticsCache.totalAddedRub - analyticsCache.totalSubtractedRub;
             balanceRubDisplay.textContent = `${balanceRub.toFixed(2)} ₽`;
         }
-
+        
         const f5AddedDisplay = document.getElementById('f5-added-display');
         const f5AddedRubDisplay = document.getElementById('f5-added-rub');
         const adminOpsDisplay = document.getElementById('admin-operations-display');
         const adminOpsRubDisplay = document.getElementById('admin-operations-rub');
-
+        
         if (f5AddedDisplay && analyticsCache.f5Added !== undefined) {
             f5AddedDisplay.textContent = analyticsCache.f5Added.toFixed(2);
         }
@@ -3801,7 +4321,7 @@
         const avgSubtractedDisplay = document.getElementById('avg-subtracted-display');
         const avgSubtractedRubDisplay = document.getElementById('avg-subtracted-rub');
         const countSubtractedDisplay = document.getElementById('count-subtracted');
-
+        
         if (avgAddedDisplay && analyticsCache.avgAdded !== undefined) {
             avgAddedDisplay.textContent = analyticsCache.avgAdded.toFixed(2);
         }
@@ -3820,7 +4340,7 @@
         if (countSubtractedDisplay && analyticsCache.countSubtracted !== undefined) {
             countSubtractedDisplay.textContent = `Транзакций: ${analyticsCache.countSubtracted}`;
         }
-
+        
         const transactionsList = document.getElementById('analytics-transactions-list');
         if (transactionsList) {
             transactionsList.innerHTML = renderAnalyticsTransactions();
@@ -3921,7 +4441,7 @@
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
     }
-
+    
     async function createBonusRequest() {
         const pointsInput = document.getElementById('request-points-input');
         const noteInput = document.getElementById('request-note-input');
@@ -4018,9 +4538,9 @@
                 categories: selectedCategories,
                 manager: managerName
             };
-
+            
             const response = await makeGoogleScriptRequest('POST', requestData);
-
+            
             if (response.success) {
                 showResult(resultDiv, 'Заявка успешно создана! Ожидайте одобрения администратора.', 'success');
                 // Очищаем все поля формы
@@ -4041,28 +4561,28 @@
             showResult(resultDiv, `Ошибка: ${error.message}`, 'error');
         }
     }
-
+    
     async function syncBonusRequests(silent = false) {
         if (!webAppUrl) {
             if (!silent) showNotification('Настройте URL Google Apps Script', 'warning');
             return;
         }
-
+        
         if (!silent) showNotification('Загружаю заявки из Google Таблицы...', 'info');
-
+        
         try {
             const response = await makeGoogleScriptRequest('GET', { action: 'getBonusRequests' });
-
+            
             if (response.bonusRequests) {
                 bonusRequestsCache = response.bonusRequests;
                 localStorage.setItem('bonus_requests_cache', JSON.stringify(bonusRequestsCache));
-
+                
                 const requestsList = document.getElementById('bonus-requests-list');
                 if (requestsList) {
                     requestsList.innerHTML = renderBonusRequestsList();
                     attachBonusRequestsButtonsListeners();
                 }
-
+                
                 if (!silent) showNotification(`Загружено ${bonusRequestsCache.length} заявок`, 'success');
             }
         } catch (error) {
@@ -4125,36 +4645,36 @@
         if (!confirm(`Одобрить начисление ${points} баллов?`)) {
             return;
         }
-
+        
         showNotification('Начисляю баллы...', 'info');
-
+        
         try {
             const domain = window.location.hostname;
             const apiUrl = `https://${domain}/api/v4/contacts/${contactId}`;
-
+            
             const getResponse = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json'
                 }
             });
-
+            
             if (!getResponse.ok) {
                 throw new Error('Не удалось получить данные контакта');
             }
-
+            
             const contactData = await getResponse.json();
             let currentPoints = 0;
-
+            
             if (contactData.custom_fields_values) {
                 const bonusField = contactData.custom_fields_values.find(field => field.field_id === BONUS_FIELD_ID);
                 if (bonusField && bonusField.values && bonusField.values.length > 0) {
                     currentPoints = parseFloat(bonusField.values[0].value) || 0;
                 }
             }
-
+            
             const newBalance = currentPoints + points;
-
+            
             const payload = {
                 custom_fields_values: [
                     {
@@ -4163,7 +4683,7 @@
                     }
                 ]
             };
-
+            
             const updateResponse = await fetch(apiUrl, {
                 method: 'PATCH',
                 headers: {
@@ -4171,17 +4691,17 @@
                 },
                 body: JSON.stringify(payload)
             });
-
+            
             if (!updateResponse.ok) {
                 throw new Error('Не удалось начислить баллы');
             }
-
+            
             await makeGoogleScriptRequest('POST', {
                 action: 'updateBonusRequestStatus',
                 requestId: requestId,
                 status: 'одобрено'
             });
-
+            
             const request = bonusRequestsCache.find(r => r.requestId === requestId);
             if (request) {
                 await logBonusTransaction(
@@ -4194,7 +4714,7 @@
                     'админ'
                 );
             }
-
+            
             showNotification('Баллы успешно начислены!', 'success');
             await syncBonusRequests(false);
         } catch (error) {
@@ -4202,21 +4722,21 @@
             showNotification(`Ошибка: ${error.message}`, 'error');
         }
     }
-
+    
     async function rejectBonusRequest(requestId) {
         if (!confirm('Отклонить эту заявку?')) {
             return;
         }
-
+        
         showNotification('Обновляю статус заявки...', 'info');
-
+        
         try {
             const response = await makeGoogleScriptRequest('POST', {
                 action: 'updateBonusRequestStatus',
                 requestId: requestId,
                 status: 'отклонено'
             });
-
+            
             if (response.success) {
                 showNotification('Заявка отклонена', 'success');
                 await syncBonusRequests(false);
@@ -4231,10 +4751,10 @@
 
     async function logBonusTransaction(type, points, contactId, contactName, leadId, leadName, source) {
         if (!webAppUrl) return;
-
+        
         try {
             const managerName = document.querySelector('.user-link__name')?.textContent || 'Неизвестный менеджер';
-
+            
             const transactionData = {
                 action: 'logBonusTransaction',
                 type: type,
@@ -4246,7 +4766,7 @@
                 source: source || 'админ',
                 manager: managerName
             };
-
+            
             await makeGoogleScriptRequest('POST', transactionData);
         } catch (error) {
             console.error('Ошибка логирования транзакции:', error);
@@ -4255,7 +4775,7 @@
 
     function saveWebAppUrl() {
         const url = document.getElementById('webapp-url-input').value.trim();
-
+        
         if (!url) {
             showNotification('Введите URL', 'warning');
             return;
@@ -4362,7 +4882,7 @@
         currentLeadBudget = getLeadBudget();
         overlay.style.display = 'block';
         switchTab('check');
-
+        
         if (amoCRMPromoCodes.length === 0) {
             await syncWithAmoCRM(true);
         }
@@ -4378,7 +4898,7 @@
     function showResult(container, message, type) {
         container.style.display = 'block';
         container.innerHTML = message;
-
+        
         const colors = {
             success: { bg: '#d4edda', border: '#c3e6cb', text: '#155724' },
             error: { bg: '#f8d7da', border: '#f5c6cb', text: '#721c24' },
