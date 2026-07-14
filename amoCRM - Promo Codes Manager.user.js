@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.5.3
-// @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов и защитой паролем
+// @version      2.6.0
+// @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
 // @match        https://*.kommo.com/*
@@ -22,6 +22,8 @@
 
     const PROMO_FIELD_ID = 3025067;
     const BONUS_FIELD_ID = 2959149;
+    const FLORIST_FIELD_ID = 2952775;          // списковое поле «Флорист» в сделке
+    const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
 
@@ -3042,7 +3044,7 @@
     // --- Кэш результатов аналитики промокодов
     function cachePromoAnalytics(obj) {
         try {
-            localStorage.setItem('promo_analytics_cache_v1', JSON.stringify(obj));
+            localStorage.setItem('promo_analytics_cache_v2', JSON.stringify(obj));
         } catch (e) {
             console.error('Ошибка кэширования аналитики промокодов:', e);
         }
@@ -3050,7 +3052,7 @@
 
     function getCachedPromoAnalytics() {
         try {
-            const raw = localStorage.getItem('promo_analytics_cache_v1');
+            const raw = localStorage.getItem('promo_analytics_cache_v2');
             if (!raw) return null;
             return JSON.parse(raw);
         } catch (e) {
@@ -3150,13 +3152,17 @@
 
     // Оставляем в кэше только нужные поля сделки
     function pickLeadFields(lead) {
+        // Флорист — списковое поле сделки, достаём по образцу поля промокода
+        const ff = (lead.custom_fields_values || []).find(f => f.field_id === FLORIST_FIELD_ID);
+        const florist = (ff && ff.values && ff.values[0] && ff.values[0].value) || '';
         return {
             id: lead.id,
             name: lead.name || ('Сделка ' + lead.id),
             price: Number(lead.price) || 0,
             created_at: lead.created_at,
             status_id: lead.status_id,
-            pipeline_id: lead.pipeline_id
+            pipeline_id: lead.pipeline_id,
+            florist: florist
         };
     }
 
@@ -3282,6 +3288,8 @@
                 <div id="promo-analytics-progress" style="margin-top:12px; font-size:13px; color:#FF69B4; font-family:${AN_FONT}; text-align:center;"></div>
                 <div id="promo-analytics-summary" style="margin-top:15px;"></div>
                 <div id="promo-analytics-details" style="margin-top:15px;"></div>
+                <div id="promo-florist-summary" style="margin-top:20px;"></div>
+                <div id="promo-florist-details" style="margin-top:15px;"></div>
             </div>`;
     }
 
@@ -3341,8 +3349,10 @@
     async function loadPromoAnalytics(forceRefresh) {
         const summaryEl = document.getElementById('promo-analytics-summary');
         const detailsEl = document.getElementById('promo-analytics-details');
+        const floristDetailsEl = document.getElementById('promo-florist-details');
         if (!summaryEl) return;
         if (detailsEl) detailsEl.innerHTML = '';
+        if (floristDetailsEl) floristDetailsEl.innerHTML = '';
 
         const period = getPromoAnalyticsPeriod();
         if (period.key === 'custom' && (!period.from || !period.to)) {
@@ -3358,6 +3368,7 @@
                 cached.period.endStr === period.endStr) {
                 setActivePromoPeriodButton(cached.period.key);
                 renderPromoSummaryTable(cached);
+                renderFloristReplacements(cached);
                 updateAnalyticsProgress(0, 0);
                 return;
             }
@@ -3375,6 +3386,7 @@
             const analytics = await buildPromoAnalytics(period);
             updateAnalyticsProgress(0, 0);
             renderPromoSummaryTable(analytics);
+            renderFloristReplacements(analytics);
             const totalLeads = Object.values(analytics.byCode).reduce((s, c) => s + c.leads.length, 0);
             showNotification(`Аналитика промокодов загружена: сделок ${totalLeads}`, 'success');
         } catch (e) {
@@ -3515,6 +3527,130 @@
             </div>`;
 
         const closeBtn = document.getElementById('promo-an-close-details');
+        if (closeBtn) closeBtn.onclick = () => { detailsEl.innerHTML = ''; };
+        detailsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Отдельный блок «Замены по флористам»: берёт сделки промокода «замена»
+    // и группирует их по флористу, который изначально собирал букет.
+    function renderFloristReplacements(analytics) {
+        const summaryEl = document.getElementById('promo-florist-summary');
+        const detailsEl = document.getElementById('promo-florist-details');
+        if (!summaryEl) return;
+        if (detailsEl) detailsEl.innerHTML = '';
+
+        // Находим запись промокода «замена» среди применённых кодов (регистронезависимо)
+        const entry = Object.values(analytics.byCode).find(c => {
+            const parsed = parseAmoCRMPromoCode(c.code);
+            return (parsed.code || '').trim().toLowerCase() === REPLACEMENT_CODE;
+        });
+
+        const wrap = (inner) => `
+            <div style="background:linear-gradient(135deg, #FFF5E6 0%, #FFECD1 100%); border-radius:12px; padding:20px; border:2px solid #FFCF8B;">
+                <h3 style="margin:0 0 12px 0; font-size:17px; color:#E67E22; font-family:${AN_FONT}; display:flex; align-items:center; gap:8px;">🌸 Замены по флористам</h3>
+                ${inner}
+            </div>`;
+
+        if (!entry || !entry.leads || entry.leads.length === 0) {
+            summaryEl.innerHTML = wrap(`<div style="text-align:center; padding:15px; color:#999; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодом «замена» не найдено</div>`);
+            return;
+        }
+
+        // Группируем сделки-замены по флористу
+        const byFlorist = {};
+        entry.leads.forEach(l => {
+            const name = (l.florist && String(l.florist).trim()) || 'Не указан';
+            if (!byFlorist[name]) byFlorist[name] = [];
+            byFlorist[name].push(l);
+        });
+
+        const rows = Object.keys(byFlorist)
+            .map(name => ({ name, leads: byFlorist[name], metrics: computeCodeMetrics(byFlorist[name]) }))
+            .sort((a, b) => b.metrics.count - a.metrics.count);
+
+        const totalReplacements = entry.leads.length;
+        const totalBudget = rows.reduce((s, r) => s + r.metrics.sumBudget, 0);
+
+        const rowsHtml = rows.map(r => {
+            const isUnknown = r.name === 'Не указан';
+            return `
+                <tr class="promo-florist-row" data-florist="${encodeURIComponent(r.name)}" style="cursor:pointer; border-bottom:1px solid #FFE0B2; transition:background 0.15s;" onmouseover="this.style.background='#FFF7EC'" onmouseout="this.style.background='transparent'">
+                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:${isUnknown ? '#999' : '#333'}; font-weight:600;">${r.name}</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#E67E22; font-weight:bold;">${r.metrics.count}</td>
+                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#333;">${r.metrics.sumBudget.toLocaleString('ru-RU')} ₽</td>
+                </tr>`;
+        }).join('');
+
+        summaryEl.innerHTML = wrap(`
+            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#666;">
+                <span>Флористов с заменами: <strong style="color:#E67E22;">${rows.length}</strong></span>
+                <span>Всего замен: <strong style="color:#E67E22;">${totalReplacements}</strong></span>
+                <span>Сумма бюджетов: <strong style="color:#E67E22;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
+            </div>
+            <table style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px;">
+                <thead>
+                    <tr style="border-bottom:2px solid #FFCF8B;">
+                        <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Флорист</th>
+                        <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Замен</th>
+                        <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Сумма бюджетов</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+            <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на флориста, чтобы увидеть сделки, по которым были замены</div>`);
+
+        summaryEl.querySelectorAll('.promo-florist-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const name = decodeURIComponent(row.dataset.florist);
+                renderFloristDetails(name, byFlorist[name] || [], analytics);
+            });
+        });
+    }
+
+    // Детализация: список сделок-замен конкретного флориста со ссылками
+    function renderFloristDetails(floristName, leads, analytics) {
+        const detailsEl = document.getElementById('promo-florist-details');
+        if (!detailsEl) return;
+
+        const domain = window.location.hostname;
+        const statusMap = analytics.statusMap || {};
+        const sorted = (leads || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+
+        if (sorted.length === 0) {
+            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#999; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
+            return;
+        }
+
+        const items = sorted.map(l => {
+            const url = `https://${domain}/leads/detail/${l.id}`;
+            const stage = statusMap[l.status_id] || ('Этап ' + l.status_id);
+            const isWon = l.status_id === AMO_STATUS_WON;
+            const isLost = l.status_id === AMO_STATUS_LOST;
+            const stageColor = isWon ? '#2e7d32' : isLost ? '#c62828' : '#FF9800';
+            const dateStr = l.created_at ? formatDate(l.created_at * 1000) : '';
+            return `
+                <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
+                        <div style="flex:1;">
+                            <div style="font-size:14px; font-family:${AN_FONT};">💼 <a href="${url}" target="_blank" style="color:#E67E22; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:12px; color:#666; font-family:${AN_FONT}; margin-top:4px;">📊 ${stage} • 🗂 ${analytics.pipelineName || ''}</div>
+                            <div style="font-size:11px; color:#999; font-family:${AN_FONT}; margin-top:3px;">🗓 ${dateStr}</div>
+                        </div>
+                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#333; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        detailsEl.innerHTML = `
+            <div style="background:linear-gradient(135deg, #FFF5E6 0%, #FFECD1 100%); border-radius:10px; padding:15px; border:2px solid #FFCF8B;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h4 style="margin:0; font-size:15px; color:#E67E22; font-family:${AN_FONT};">Замены флориста «${floristName}» (${sorted.length})</h4>
+                    <button id="promo-florist-close-details" style="background:#E67E22; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
+                </div>
+                <div style="max-height:400px; overflow-y:auto;">${items}</div>
+            </div>`;
+
+        const closeBtn = document.getElementById('promo-florist-close-details');
         if (closeBtn) closeBtn.onclick = () => { detailsEl.innerHTML = ''; };
         detailsEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
