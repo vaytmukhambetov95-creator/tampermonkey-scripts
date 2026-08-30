@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.1.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.0.0';
+    const SCRIPT_VERSION = '3.1.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -249,12 +249,23 @@
                 --pcx-danger: #D64545;
             }
 
+            /* Общий док для кнопок обоих юзерскриптов - чтобы стояли строго друг под другом */
+            #orange-userscript-dock {
+                position: fixed;
+                z-index: 9998;
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            #orange-userscript-dock.dragging { cursor: grabbing; }
+            #orange-userscript-dock.dragging button { pointer-events: none; }
+
             /* Плавающая кнопка */
             #promo-codes-main-btn {
-                position: fixed;
-                bottom: 160px;
-                right: 20px;
-                z-index: 9998;
+                order: 1;
+                min-width: 152px;
+                justify-content: center;
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
@@ -284,8 +295,7 @@
 
             #promo-codes-overlay {
                 position: fixed; inset: 0; z-index: 9999;
-                background: rgba(18, 18, 26, 0.45);
-                backdrop-filter: blur(3px);
+                background: rgba(18, 18, 26, 0.55);
             }
             #promo-codes-modal {
                 position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -295,6 +305,7 @@
                 box-shadow: 0 30px 80px rgba(16, 16, 28, 0.28);
                 z-index: 10000;
                 display: flex; flex-direction: column; overflow: hidden;
+                isolation: isolate;
                 color: var(--pcx-text);
             }
 
@@ -315,9 +326,10 @@
 
             /* Вкладки */
             .pcx-tabs {
-                display: flex; gap: 4px; padding: 8px 16px;
+                display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; padding: 8px 16px;
                 border-bottom: 1px solid var(--pcx-border);
                 background: var(--pcx-surface); position: relative; z-index: 2;
+                box-shadow: 0 4px 10px rgba(18, 18, 30, 0.05);
                 overflow-x: auto;
             }
             .promo-tab {
@@ -329,9 +341,12 @@
                 transition: background 0.15s ease, color 0.15s ease;
             }
             .promo-tab:hover { background: var(--pcx-surface-2); color: var(--pcx-text); }
+            .promo-tab:focus { outline: none; }
+            .promo-tab:focus-visible { outline: 2px solid var(--pcx-accent); outline-offset: 2px; }
             .promo-tab.active { background: var(--pcx-accent-soft); color: var(--pcx-accent); }
 
-            #promo-modal-content { flex: 1; overflow-y: auto; padding: 22px 24px 26px; }
+            #promo-modal-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 22px 24px 26px;
+                position: relative; z-index: 0; contain: paint; }
 
             /* Приводим к общему виду то, что внутри вкладок собрано инлайновыми стилями */
             #promo-codes-overlay input[type="text"],
@@ -389,7 +404,7 @@
 
             /* Плашка «вышла новая версия» */
             .pcx-update {
-                position: fixed; left: 20px; bottom: 20px; z-index: 10004;
+                position: fixed; right: 20px; top: 20px; z-index: 10004;
                 width: 320px; padding: 16px 18px;
                 background: var(--pcx-surface); border: 1px solid var(--pcx-border);
                 border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);
@@ -419,20 +434,111 @@
         document.head.appendChild(style);
     }
 
+    // Общий док для плавающих кнопок: его создаёт тот скрипт, который загрузился первым,
+    // второй просто добавляет свою кнопку. Так «Промокоды» и «Каталог» всегда друг под другом.
+    const DOCK_ID = 'orange-userscript-dock';
+    const DOCK_POSITION_KEY = 'orange_dock_position';
+
+    function ensureButtonDock() {
+        let dock = document.getElementById(DOCK_ID);
+        if (dock) return dock;
+
+        injectStyles();
+
+        dock = document.createElement('div');
+        dock.id = DOCK_ID;
+        dock.className = 'pcx';
+        document.body.appendChild(dock);
+
+        // Возвращаем сохранённую позицию (её пишет тот скрипт, за чью кнопку перетащили док)
+        const place = () => {
+            let pos = null;
+            try {
+                pos = JSON.parse(localStorage.getItem(DOCK_POSITION_KEY) || 'null');
+            } catch (error) {
+                pos = null;
+            }
+            const width = dock.offsetWidth || 152;
+            const height = dock.offsetHeight || 90;
+            const x = pos ? Math.min(Math.max(pos.x, 0), window.innerWidth - width) : window.innerWidth - width - 20;
+            const y = pos ? Math.min(Math.max(pos.y, 0), window.innerHeight - height) : window.innerHeight - height - 20;
+            dock.style.left = `${x}px`;
+            dock.style.top = `${y}px`;
+        };
+        place();
+        window.addEventListener('resize', place);
+
+        // Перетаскивается док целиком, за любую кнопку
+        let isDragging = false;
+        let hasMoved = false;
+        let startX = 0, startY = 0, initialX = 0, initialY = 0;
+
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+                hasMoved = true;
+                dock.classList.add('dragging');
+            }
+            const x = Math.max(0, Math.min(initialX + deltaX, window.innerWidth - dock.offsetWidth));
+            const y = Math.max(0, Math.min(initialY + deltaY, window.innerHeight - dock.offsetHeight));
+            dock.style.left = `${x}px`;
+            dock.style.top = `${y}px`;
+        };
+
+        const onMouseUp = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            dock.classList.remove('dragging');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+
+            if (hasMoved) {
+                try {
+                    localStorage.setItem(DOCK_POSITION_KEY, JSON.stringify({ x: dock.offsetLeft, y: dock.offsetTop }));
+                } catch (error) { /* не критично */ }
+            }
+        };
+
+        dock.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            isDragging = true;
+            hasMoved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialX = dock.offsetLeft;
+            initialY = dock.offsetTop;
+            e.preventDefault();
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+
+        // После перетаскивания клик по кнопке не должен открывать окно
+        dock.addEventListener('click', (e) => {
+            if (hasMoved) {
+                e.stopPropagation();
+                e.preventDefault();
+                hasMoved = false;
+            }
+        }, true);
+
+        return dock;
+    }
+
     function createPromoButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
 
         injectStyles();
 
-        const existingBtn = document.getElementById('promo-codes-main-btn');
-        if (existingBtn) return;
+        if (document.getElementById('promo-codes-main-btn')) return;
 
         const button = document.createElement('button');
         button.id = 'promo-codes-main-btn';
-        button.className = 'pcx';
         button.innerHTML = `${ICONS.gift}<span>Промокоды</span>`;
         button.onclick = async () => await openPromoModal();
-        document.body.appendChild(button);
+
+        ensureButtonDock().appendChild(button);
     }
 
     const PROMO_TABS = [
@@ -994,7 +1100,7 @@
             <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #FAFAFB; border-radius: 10px; margin-bottom: 6px; border: 1px solid #E7E7EC;">
                 <div style="flex: 1; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     <span style="font-weight: 600; color: #16161A;">${binding.phone}</span>
-                    ${binding.name ? `<span style="color: #6E6E7A; margin-left: 8px;">— ${binding.name}</span>` : ''}
+                    ${binding.name ? `<span style="color: #6E6E7A; margin-left: 8px;">- ${binding.name}</span>` : ''}
                 </div>
                 <button type="button" class="remove-phone-btn" data-index="${index}" style="
                     background: #D64545;
@@ -2072,7 +2178,7 @@
                         <td style="padding: 12px; border-bottom: 1px solid #FDEFF4; text-align: center;">
                             <span style="display: inline-block; background: #E6407A; color: white; padding: 4px 12px; border-radius: 12px; font-weight: 600;">${data.count}</span>
                         </td>
-                        <td style="padding: 12px; border-bottom: 1px solid #FDEFF4;">${leadsLinks || '<span style="color: #9C9CA8;">—</span>'}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #FDEFF4;">${leadsLinks || '<span style="color: #9C9CA8;">-</span>'}</td>
                     </tr>
                 `;
             });
@@ -2428,9 +2534,8 @@
             justify-content: center;
             position: fixed;
             inset: 0;
-            background: rgba(18, 18, 26, 0.45);
+            background: rgba(18, 18, 26, 0.55);
             z-index: 10001;
-            backdrop-filter: blur(3px);
         `;
 
         const modal = document.createElement('div');
@@ -3300,7 +3405,7 @@
 
     // Оставляем в кэше только нужные поля сделки
     function pickLeadFields(lead) {
-        // Флорист — списковое поле сделки, достаём по образцу поля промокода
+        // Флорист - списковое поле сделки, достаём по образцу поля промокода
         const ff = (lead.custom_fields_values || []).find(f => f.field_id === FLORIST_FIELD_ID);
         const florist = (ff && ff.values && ff.values[0] && ff.values[0].value) || '';
         return {
@@ -3602,7 +3707,7 @@
                 </table>
                 ${zeroCount > 0 ? `
                 <div style="margin-top:10px;">
-                    <button id="promo-an-zero-toggle" style="background:none; border:none; cursor:pointer; padding:0; font-family:${AN_FONT}; font-size:12px; color:#E6407A; text-decoration:underline;">Промокодов без применений за период: ${zeroCount} — показать</button>
+                    <button id="promo-an-zero-toggle" style="background:none; border:none; cursor:pointer; padding:0; font-family:${AN_FONT}; font-size:12px; color:#E6407A; text-decoration:underline;">Промокодов без применений за период: ${zeroCount} - показать</button>
                     <div id="promo-an-zero-list" style="display:none; margin-top:8px; padding:10px; background:#FFF7FA; border:1px dashed #E6407A; border-radius:8px;">
                         ${zeroCodes.map(p => `<span style="display:inline-block; margin:3px 5px 3px 0; padding:3px 8px; background:#fff; border:1px solid #FDEFF4; border-radius:12px; font-size:12px; font-family:${AN_FONT}; color:#6E6E7A;">${p.code}${p.description ? ` <span style="color:#C6C6D0;">(${p.description})</span>` : ''}</span>`).join('')}
                     </div>
@@ -3622,7 +3727,7 @@
                 if (!list) return;
                 const shown = list.style.display !== 'none';
                 list.style.display = shown ? 'none' : 'block';
-                zeroToggle.textContent = `Промокодов без применений за период: ${zeroCount} — ${shown ? 'показать' : 'скрыть'}`;
+                zeroToggle.textContent = `Промокодов без применений за период: ${zeroCount} - ${shown ? 'показать' : 'скрыть'}`;
             });
         }
     }
@@ -5197,6 +5302,10 @@
         const notification = document.createElement('div');
         notification.className = `pcx pcx-toast${type === 'error' ? ' pcx-toast--error' : type === 'warning' ? ' pcx-toast--warning' : type === 'info' ? ' pcx-toast--info' : ''}`;
         notification.textContent = message;
+
+        // Если висит плашка обновления - становимся под неё, а не поверх
+        const banner = document.getElementById('pcx-update-banner');
+        if (banner) notification.style.top = `${banner.offsetHeight + 32}px`;
 
         document.body.appendChild(notification);
         setTimeout(() => notification.remove(), type === 'error' ? 5000 : 3000);

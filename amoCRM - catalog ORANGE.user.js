@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.1.0
+// @version      10.2.0
 // @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.1.0';
+    const SCRIPT_VERSION = '10.2.0';
 
     // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
     // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
@@ -280,10 +280,23 @@
                 -webkit-font-smoothing: antialiased;
             }
 
-            /* Плавающая кнопка */
-            #tilda-catalog-main-btn {
+            /* Общий док для кнопок обоих юзерскриптов - чтобы стояли строго друг под другом */
+            #orange-userscript-dock {
                 position: fixed;
                 z-index: 9998;
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            #orange-userscript-dock.dragging { cursor: grabbing; }
+            #orange-userscript-dock.dragging button { pointer-events: none; }
+
+            /* Плавающая кнопка */
+            #tilda-catalog-main-btn {
+                order: 2;
+                min-width: 152px;
+                justify-content: center;
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
@@ -309,8 +322,7 @@
                 position: fixed;
                 inset: 0;
                 z-index: 9999;
-                background: rgba(18, 18, 26, 0.45);
-                backdrop-filter: blur(3px);
+                background: rgba(18, 18, 26, 0.55);
             }
             .ocx-modal {
                 position: fixed;
@@ -325,6 +337,7 @@
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
+                isolation: isolate;
                 color: var(--ocx-text);
             }
             .ocx-head {
@@ -351,6 +364,8 @@
                 transition: background 0.15s ease, color 0.15s ease;
             }
             .ocx-iconbtn:hover { background: var(--ocx-surface-2); color: var(--ocx-text); }
+            .ocx-iconbtn:focus, .ocx-btn:focus { outline: none; }
+            .ocx-iconbtn:focus-visible, .ocx-btn:focus-visible { outline: 2px solid var(--ocx-accent); outline-offset: 2px; }
 
             /* Панель фильтров */
             .ocx-filters {
@@ -429,9 +444,11 @@
             .ocx-btn--wide { width: 100%; }
 
             .ocx-summary { padding: 12px 24px 0; font-size: 13px; font-weight: 500; color: var(--ocx-text-3); }
+            .ocx-filters { position: relative; z-index: 2; box-shadow: 0 4px 10px rgba(18, 18, 30, 0.05); }
 
             /* Галерея */
-            .ocx-body { flex: 1; overflow-y: auto; padding: 14px 24px 24px; }
+            .ocx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 24px 24px;
+                position: relative; z-index: 0; contain: paint; }
             .ocx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; }
             .ocx-empty { grid-column: 1/-1; padding: 60px 0; text-align: center; color: var(--ocx-text-3); font-size: 14px; font-weight: 500; }
 
@@ -547,6 +564,7 @@
             /* Редактор категории */
             .ocx-editor {
                 position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                isolation: isolate;
                 width: min(1100px, 92vw); height: min(84vh, 820px);
                 background: var(--ocx-surface); border-radius: 18px; overflow: hidden;
                 box-shadow: 0 30px 80px rgba(16, 16, 28, 0.3);
@@ -576,7 +594,7 @@
 
             /* Плашка «вышла новая версия» */
             .ocx-update {
-                position: fixed; left: 20px; bottom: 20px; z-index: 10004;
+                position: fixed; right: 20px; top: 20px; z-index: 10004;
                 width: 320px; padding: 16px 18px;
                 background: var(--ocx-surface); border: 1px solid var(--ocx-border);
                 border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);
@@ -606,100 +624,115 @@
     }
 
 
+    // Общий док для плавающих кнопок: его создаёт тот скрипт, который загрузился первым,
+    // второй просто добавляет свою кнопку. Так «Каталог» и «Промокоды» всегда друг под другом.
+    const DOCK_ID = 'orange-userscript-dock';
+    const DOCK_POSITION_KEY = 'orange_dock_position';
+
+    function ensureButtonDock() {
+        let dock = document.getElementById(DOCK_ID);
+        if (dock) return dock;
+
+        injectStyles();
+
+        dock = document.createElement('div');
+        dock.id = DOCK_ID;
+        dock.className = 'ocx';
+        document.body.appendChild(dock);
+
+        // Возвращаем сохранённую позицию (её пишет тот скрипт, за чью кнопку перетащили док)
+        const place = () => {
+            let pos = null;
+            try {
+                pos = JSON.parse(localStorage.getItem(DOCK_POSITION_KEY) || 'null');
+            } catch (error) {
+                pos = null;
+            }
+            const width = dock.offsetWidth || 152;
+            const height = dock.offsetHeight || 90;
+            const x = pos ? Math.min(Math.max(pos.x, 0), window.innerWidth - width) : window.innerWidth - width - 20;
+            const y = pos ? Math.min(Math.max(pos.y, 0), window.innerHeight - height) : window.innerHeight - height - 20;
+            dock.style.left = `${x}px`;
+            dock.style.top = `${y}px`;
+        };
+        place();
+        window.addEventListener('resize', place);
+
+        // Перетаскивается док целиком, за любую кнопку
+        let isDragging = false;
+        let hasMoved = false;
+        let startX = 0, startY = 0, initialX = 0, initialY = 0;
+
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+                hasMoved = true;
+                dock.classList.add('dragging');
+            }
+            const x = Math.max(0, Math.min(initialX + deltaX, window.innerWidth - dock.offsetWidth));
+            const y = Math.max(0, Math.min(initialY + deltaY, window.innerHeight - dock.offsetHeight));
+            dock.style.left = `${x}px`;
+            dock.style.top = `${y}px`;
+        };
+
+        const onMouseUp = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            dock.classList.remove('dragging');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+
+            if (hasMoved) {
+                try {
+                    localStorage.setItem(DOCK_POSITION_KEY, JSON.stringify({ x: dock.offsetLeft, y: dock.offsetTop }));
+                } catch (error) { /* не критично */ }
+            }
+        };
+
+        dock.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            isDragging = true;
+            hasMoved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            initialX = dock.offsetLeft;
+            initialY = dock.offsetTop;
+            e.preventDefault();
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+
+        // После перетаскивания клик по кнопке не должен открывать окно
+        dock.addEventListener('click', (e) => {
+            if (hasMoved) {
+                e.stopPropagation();
+                e.preventDefault();
+                hasMoved = false;
+            }
+        }, true);
+
+        return dock;
+    }
+
     function createMainButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
 
         injectStyles();
 
-        // Проверяем, не существует ли уже кнопка
         if (document.getElementById('tilda-catalog-main-btn')) return;
 
         const button = document.createElement('button');
         button.id = 'tilda-catalog-main-btn';
-        button.className = 'ocx';
         button.innerHTML = `${ICONS.folder}<span>Каталог</span>`;
         button.title = 'Каталог Orange';
+        button.onclick = openCatalogModal;
 
-        // Загружаем сохранённую позицию или используем дефолтную
-        const savedPosition = localStorage.getItem('catalog_button_position');
-        let posX = window.innerWidth - 120;
-        let posY = window.innerHeight - 80;
+        ensureButtonDock().appendChild(button);
 
-        if (savedPosition) {
-            try {
-                const pos = JSON.parse(savedPosition);
-                posX = Math.min(pos.x, window.innerWidth - 100);
-                posY = Math.min(pos.y, window.innerHeight - 40);
-            } catch (e) {}
-        }
-
-        button.style.left = `${posX}px`;
-        button.style.top = `${posY}px`;
-
-        // Drag & Drop функционал
-        let isDragging = false;
-        let startX, startY, initialX, initialY;
-        let hasMoved = false;
-
-        const onMouseMove = (e) => {
-            if (!isDragging) return;
-
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
-
-            if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
-                hasMoved = true;
-            }
-
-            let newX = initialX + deltaX;
-            let newY = initialY + deltaY;
-
-            // Ограничиваем пределами экрана
-            const btnWidth = button.offsetWidth || 100;
-            const btnHeight = button.offsetHeight || 40;
-            newX = Math.max(0, Math.min(newX, window.innerWidth - btnWidth));
-            newY = Math.max(0, Math.min(newY, window.innerHeight - btnHeight));
-
-            button.style.left = newX + 'px';
-            button.style.top = newY + 'px';
-        };
-
-        const onMouseUp = () => {
-            if (isDragging) {
-                isDragging = false;
-                button.classList.remove('dragging');
-
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-
-                // Сохраняем позицию
-                localStorage.setItem('catalog_button_position', JSON.stringify({
-                    x: button.offsetLeft,
-                    y: button.offsetTop
-                }));
-
-                // Если не двигали - открываем модалку
-                if (!hasMoved) {
-                    openCatalogModal();
-                }
-            }
-        };
-
-        button.onmousedown = (e) => {
-            isDragging = true;
-            hasMoved = false;
-            startX = e.clientX;
-            startY = e.clientY;
-            initialX = button.offsetLeft;
-            initialY = button.offsetTop;
-            button.classList.add('dragging');
-            e.preventDefault();
-
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-        };
-
-        document.body.appendChild(button);
+        // Позиция отдельной кнопки больше не нужна - её место определяет док
+        localStorage.removeItem('catalog_button_position');
     }
 
     function createModal() {
@@ -2114,6 +2147,10 @@
         const notification = document.createElement('div');
         notification.className = `ocx ocx-toast${type === 'error' ? ' ocx-toast--error' : type === 'info' ? ' ocx-toast--info' : ''}`;
         notification.textContent = message;
+
+        // Если висит плашка обновления - становимся под неё, а не поверх
+        const banner = document.getElementById('ocx-update-banner');
+        if (banner) notification.style.top = `${banner.offsetHeight + 32}px`;
 
         document.body.appendChild(notification);
         setTimeout(() => notification.remove(), type === 'error' ? 5000 : 3000);
