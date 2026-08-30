@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      2.6.0
+// @version      3.0.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -9,6 +9,8 @@
 // @updateURL    https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20Promo%20Codes%20Manager.user.js
 // @downloadURL  https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20Promo%20Codes%20Manager.user.js
 // @grant        GM.xmlHttpRequest
+// @connect      fonts.gstatic.com
+// @connect      raw.githubusercontent.com
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      script.google.com
@@ -26,14 +28,15 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
+    const SCRIPT_VERSION = '3.0.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
-        delivery: { key: 'delivery', label: 'Проблемы с доставкой', icon: '🚚' },
-        quality: { key: 'quality', label: 'Завял букет, проблема с качеством', icon: '🌸' },
-        card: { key: 'card', label: 'Жалобы на подпись в открытке и прочие моменты', icon: '✉️' },
-        other_problems: { key: 'other_problems', label: 'Прочие проблемы', icon: '❓' },
-        custom: { key: 'custom', label: 'Другое', icon: '✏️' }
+        delivery: { key: 'delivery', label: 'Проблемы с доставкой' },
+        quality: { key: 'quality', label: 'Завял букет, проблема с качеством' },
+        card: { key: 'card', label: 'Жалобы на подпись в открытке и прочие моменты' },
+        other_problems: { key: 'other_problems', label: 'Прочие проблемы' },
+        custom: { key: 'custom', label: 'Другое' }
     };
 
     // URL Google Apps Script по умолчанию (можно изменить в настройках)
@@ -49,207 +52,434 @@
     let currentBonusPoints = 0;
     let bonusRequestsCache = [];
 
+    // ==== Оформление интерфейса ====
+
+    const FONT_FAMILY = "'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+    // Вариативный Manrope: два woff2 (кириллица + латиница) на все начертания.
+    // Вшиваем как data-URI - внешний <link> на Google Fonts не пропустит CSP amoCRM.
+    const FONT_SOURCES = [
+        { range: 'U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116',
+          url: 'https://fonts.gstatic.com/s/manrope/v20/xn7gYHE41ni1AdIRggOxSvfedN62Zw.woff2' },
+        { range: 'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD',
+          url: 'https://fonts.gstatic.com/s/manrope/v20/xn7gYHE41ni1AdIRggexSvfedN4.woff2' }
+    ];
+    const FONT_CACHE_KEY = 'orange_font_manrope_v1';   // общий кэш с юзерскриптом каталога
+
+    function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary);
+    }
+
+    function fetchFontAsBase64(url) {
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: url,
+                responseType: 'arraybuffer',
+                onload: (response) => {
+                    if (response.status !== 200) { reject(new Error(String(response.status))); return; }
+                    try { resolve(arrayBufferToBase64(response.response)); } catch (error) { reject(error); }
+                },
+                onerror: () => reject(new Error('сеть')),
+                timeout: 20000
+            });
+        });
+    }
+
+    async function injectFont() {
+        if (document.getElementById('pcx-font') || document.getElementById('ocx-font')) return;
+
+        let payload = null;
+        try {
+            payload = JSON.parse(localStorage.getItem(FONT_CACHE_KEY) || 'null');
+        } catch (error) {
+            payload = null;
+        }
+
+        if (!payload || payload.length !== FONT_SOURCES.length) {
+            try {
+                payload = await Promise.all(FONT_SOURCES.map(src => fetchFontAsBase64(src.url)));
+                localStorage.setItem(FONT_CACHE_KEY, JSON.stringify(payload));
+            } catch (error) {
+                console.warn('Manrope не загрузился, используем системный шрифт:', error);
+                return;
+            }
+        }
+
+        const style = document.createElement('style');
+        style.id = 'pcx-font';
+        style.textContent = payload.map((base64, i) => `
+            @font-face {
+                font-family: 'Manrope';
+                font-style: normal;
+                font-weight: 400 800;
+                font-display: swap;
+                src: url(data:font/woff2;base64,${base64}) format('woff2');
+                unicode-range: ${FONT_SOURCES[i].range};
+            }
+        `).join('');
+        document.head.appendChild(style);
+    }
+
+    // Раз в час сверяем свою версию с той, что лежит на GitHub: менеджеру не надо
+    // ни лезть в панель Tampermonkey, ни ждать суточной автопроверки.
+    const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20Promo%20Codes%20Manager.user.js';
+    const UPDATE_CHECKED_KEY = 'promo_manager_update_checked_at';
+    const UPDATE_SNOOZED_KEY = 'promo_manager_update_snoozed';
+    const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;   // не чаще раза в час
+    const UPDATE_SNOOZE_TIME = 24 * 60 * 60 * 1000; // «Позже» - молчим сутки про эту версию
+
+    // Сравнение версий вида 3.1.0: >0 если a новее b
+    function compareVersions(a, b) {
+        const pa = String(a).split('.').map(n => parseInt(n) || 0);
+        const pb = String(b).split('.').map(n => parseInt(n) || 0);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pa[i] || 0) - (pb[i] || 0);
+            if (diff !== 0) return diff;
+        }
+        return 0;
+    }
+
+    function fetchLatestVersion() {
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: `${SCRIPT_RAW_URL}?t=${Date.now()}`,
+                headers: { 'Range': 'bytes=0-2047' },   // шапки хватает, файл целиком не тянем
+                onload: (response) => {
+                    const match = /@version\s+([\d.]+)/.exec(response.responseText || '');
+                    match ? resolve(match[1]) : reject(new Error('версия не найдена'));
+                },
+                onerror: () => reject(new Error('сеть')),
+                timeout: 15000
+            });
+        });
+    }
+
+    function showUpdateBanner(latest) {
+        if (document.getElementById('pcx-update-banner')) return;
+
+        injectStyles();
+        const banner = document.createElement('div');
+        banner.id = 'pcx-update-banner';
+        banner.className = 'pcx pcx-update';
+        banner.innerHTML = `
+            <div class="pcx-update__title">Вышла новая версия промокодов</div>
+            <div class="pcx-update__text">Установлена ${SCRIPT_VERSION}, доступна ${latest}. Нажмите «Обновить» - откроется вкладка Tampermonkey, там нажмите кнопку обновления.</div>
+            <div class="pcx-update__actions">
+                <button class="pcx-btn pcx-btn--ghost" data-act="later">Позже</button>
+                <button class="pcx-btn pcx-btn--primary" data-act="update">Обновить</button>
+            </div>
+        `;
+
+        banner.querySelector('[data-act="update"]').onclick = () => {
+            window.open(SCRIPT_RAW_URL, '_blank');
+            banner.remove();
+        };
+        banner.querySelector('[data-act="later"]').onclick = () => {
+            try {
+                localStorage.setItem(UPDATE_SNOOZED_KEY, JSON.stringify({ version: latest, until: Date.now() + UPDATE_SNOOZE_TIME }));
+            } catch (error) { /* не критично */ }
+            banner.remove();
+        };
+
+        document.body.appendChild(banner);
+    }
+
+    async function checkForScriptUpdate() {
+        try {
+            const checkedAt = parseInt(localStorage.getItem(UPDATE_CHECKED_KEY)) || 0;
+            if (Date.now() - checkedAt < UPDATE_CHECK_INTERVAL) return;
+            localStorage.setItem(UPDATE_CHECKED_KEY, String(Date.now()));
+
+            const latest = await fetchLatestVersion();
+            if (compareVersions(latest, SCRIPT_VERSION) <= 0) return;
+
+            const snoozed = JSON.parse(localStorage.getItem(UPDATE_SNOOZED_KEY) || 'null');
+            if (snoozed && snoozed.version === latest && Date.now() < snoozed.until) return;
+
+            console.log(`Промокоды: доступна версия ${latest}, установлена ${SCRIPT_VERSION}`);
+            showUpdateBanner(latest);
+        } catch (error) {
+            console.warn('Проверка обновлений не удалась:', error);
+        }
+    }
+
+    // Тонкие иконки вместо эмодзи
+    const ICONS = {
+        close: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+        plus: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>',
+        minus: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3.5 8h9"/></svg>',
+        refresh: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 11-1.6-3.9"/><path d="M13.5 2.5V5H11"/></svg>',
+        save: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5a1 1 0 011-1h7.6L13.5 5v7.5a1 1 0 01-1 1h-9a1 1 0 01-1-1z"/><path d="M5.5 2.5v4h5v-4M5.5 13.5v-3.5h5v3.5"/></svg>',
+        chart: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11"/><path d="M4.5 11V7M8 11V3.5M11.5 11V8.5"/></svg>',
+        lock: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg>',
+        unlock: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 014.9-.7"/></svg>',
+        exit: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 13.5h-3a1 1 0 01-1-1v-9a1 1 0 011-1h3"/><path d="M10 11l3-3-3-3M13 8H6"/></svg>',
+        sync: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5h9L9 4"/><path d="M13.5 9.5h-9L7 12"/></svg>',
+        link: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5l3-3"/><path d="M7.5 4.5l1-1a2.5 2.5 0 013.5 3.5l-1 1M8.5 11.5l-1 1a2.5 2.5 0 01-3.5-3.5l1-1"/></svg>',
+        check: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>',
+        cross: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>',
+        gift: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="11" height="7" rx="1"/><path d="M2 6.5h12M8 6.5v7"/><path d="M8 6.5S7 2.5 5.2 3.1C4 3.5 4.4 6 8 6.5zM8 6.5s1-4 2.8-3.4C12 3.5 11.6 6 8 6.5z"/></svg>',
+        clock: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.2"/></svg>'
+    };
+
+    function injectStyles() {
+        if (document.getElementById('pcx-styles')) return;
+
+        const style = document.createElement('style');
+        style.id = 'pcx-styles';
+        style.textContent = `
+            :root {
+                --pcx-accent: #E6407A;
+                --pcx-accent-hover: #CF356B;
+                --pcx-accent-soft: #FDEFF4;
+                --pcx-text: #16161A;
+                --pcx-text-2: #6E6E7A;
+                --pcx-text-3: #9C9CA8;
+                --pcx-border: #E7E7EC;
+                --pcx-border-strong: #D6D6DE;
+                --pcx-surface: #FFFFFF;
+                --pcx-surface-2: #F7F7F9;
+                --pcx-ok: #2E9E63;
+                --pcx-warn: #C77A18;
+                --pcx-danger: #D64545;
+            }
+
+            /* Плавающая кнопка */
+            #promo-codes-main-btn {
+                position: fixed;
+                bottom: 160px;
+                right: 20px;
+                z-index: 9998;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                height: 40px;
+                padding: 0 18px;
+                border: none;
+                border-radius: 12px;
+                background: var(--pcx-accent);
+                color: #fff;
+                font-family: ${FONT_FAMILY};
+                font-size: 14px;
+                font-weight: 600;
+                letter-spacing: -0.01em;
+                cursor: pointer;
+                box-shadow: 0 6px 20px rgba(230, 64, 122, 0.28);
+                transition: background 0.15s ease, box-shadow 0.15s ease;
+            }
+            #promo-codes-main-btn:hover { background: var(--pcx-accent-hover); box-shadow: 0 8px 24px rgba(230, 64, 122, 0.34); }
+
+            /* Общая типографика внутри окон скрипта */
+            #promo-codes-overlay, #promo-codes-overlay *,
+            .pcx, .pcx * {
+                font-family: ${FONT_FAMILY} !important;
+                box-sizing: border-box;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            #promo-codes-overlay {
+                position: fixed; inset: 0; z-index: 9999;
+                background: rgba(18, 18, 26, 0.45);
+                backdrop-filter: blur(3px);
+            }
+            #promo-codes-modal {
+                position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                width: min(960px, 94vw); max-height: 88vh;
+                background: var(--pcx-surface);
+                border-radius: 18px;
+                box-shadow: 0 30px 80px rgba(16, 16, 28, 0.28);
+                z-index: 10000;
+                display: flex; flex-direction: column; overflow: hidden;
+                color: var(--pcx-text);
+            }
+
+            .pcx-head {
+                display: flex; align-items: center; justify-content: space-between; gap: 16px;
+                padding: 20px 24px; border-bottom: 1px solid var(--pcx-border);
+                background: var(--pcx-surface); position: relative; z-index: 2;
+            }
+            .pcx-head__title { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--pcx-text); }
+            .pcx-head__sub { margin: 3px 0 0; font-size: 13px; font-weight: 500; color: var(--pcx-text-3); }
+            .pcx-iconbtn {
+                display: inline-flex; align-items: center; justify-content: center;
+                width: 34px; height: 34px; border: none; border-radius: 10px;
+                background: transparent; color: var(--pcx-text-2); cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
+            }
+            .pcx-iconbtn:hover { background: var(--pcx-surface-2); color: var(--pcx-text); }
+
+            /* Вкладки */
+            .pcx-tabs {
+                display: flex; gap: 4px; padding: 8px 16px;
+                border-bottom: 1px solid var(--pcx-border);
+                background: var(--pcx-surface); position: relative; z-index: 2;
+                overflow-x: auto;
+            }
+            .promo-tab {
+                flex: none;
+                height: 36px; padding: 0 14px;
+                border: none; border-radius: 9px; background: transparent;
+                font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em;
+                color: var(--pcx-text-2); cursor: pointer; white-space: nowrap;
+                transition: background 0.15s ease, color 0.15s ease;
+            }
+            .promo-tab:hover { background: var(--pcx-surface-2); color: var(--pcx-text); }
+            .promo-tab.active { background: var(--pcx-accent-soft); color: var(--pcx-accent); }
+
+            #promo-modal-content { flex: 1; overflow-y: auto; padding: 22px 24px 26px; }
+
+            /* Приводим к общему виду то, что внутри вкладок собрано инлайновыми стилями */
+            #promo-codes-overlay input[type="text"],
+            #promo-codes-overlay input[type="number"],
+            #promo-codes-overlay input[type="password"],
+            #promo-codes-overlay input[type="date"],
+            #promo-codes-overlay input[type="tel"],
+            #promo-codes-overlay select,
+            #promo-codes-overlay textarea {
+                border: 1px solid var(--pcx-border) !important;
+                border-radius: 10px !important;
+                padding: 9px 12px !important;
+                font-size: 14px !important;
+                font-weight: 500 !important;
+                color: var(--pcx-text) !important;
+                background: var(--pcx-surface) !important;
+                outline: none !important;
+                transition: border-color 0.15s ease, box-shadow 0.15s ease;
+            }
+            #promo-codes-overlay input:focus,
+            #promo-codes-overlay select:focus,
+            #promo-codes-overlay textarea:focus {
+                border-color: var(--pcx-accent) !important;
+                box-shadow: 0 0 0 3px var(--pcx-accent-soft) !important;
+            }
+            #promo-codes-overlay input::placeholder,
+            #promo-codes-overlay textarea::placeholder { color: var(--pcx-text-3) !important; font-weight: 500 !important; }
+
+            #promo-codes-overlay button:not(.pcx-iconbtn):not(.promo-tab) {
+                border-radius: 10px !important;
+                border-width: 1px !important;
+                font-size: 14px !important;
+                font-weight: 600 !important;
+                letter-spacing: -0.01em !important;
+                box-shadow: none !important;
+                transition: filter 0.15s ease, background 0.15s ease, border-color 0.15s ease !important;
+            }
+            #promo-codes-overlay button:not(.pcx-iconbtn):not(.promo-tab):hover { filter: brightness(0.94); }
+
+            #promo-codes-overlay h2 { font-size: 17px !important; font-weight: 700 !important; letter-spacing: -0.02em !important; }
+            #promo-codes-overlay h3 { font-size: 15px !important; font-weight: 600 !important; letter-spacing: -0.01em !important; color: var(--pcx-text) !important; }
+            #promo-codes-overlay h4 { font-size: 14px !important; font-weight: 600 !important; color: var(--pcx-text) !important; }
+            #promo-codes-overlay label { font-weight: 500 !important; }
+
+            .pcx-btn {
+                display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+                height: 38px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px;
+                font-size: 14px; font-weight: 600; letter-spacing: -0.01em; cursor: pointer;
+                transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+            }
+            .pcx-btn--primary { background: var(--pcx-accent); color: #fff; }
+            .pcx-btn--primary:hover { background: var(--pcx-accent-hover); }
+            .pcx-btn--ghost { background: var(--pcx-surface); border-color: var(--pcx-border); color: var(--pcx-text-2); }
+            .pcx-btn--ghost:hover { border-color: var(--pcx-border-strong); color: var(--pcx-text); }
+
+            /* Плашка «вышла новая версия» */
+            .pcx-update {
+                position: fixed; left: 20px; bottom: 20px; z-index: 10004;
+                width: 320px; padding: 16px 18px;
+                background: var(--pcx-surface); border: 1px solid var(--pcx-border);
+                border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);
+                animation: pcx-slide 0.22s ease-out;
+            }
+            .pcx-update__title { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--pcx-text); margin-bottom: 4px; }
+            .pcx-update__text { font-size: 12.5px; font-weight: 500; line-height: 1.45; color: var(--pcx-text-2); margin-bottom: 14px; }
+            .pcx-update__actions { display: flex; gap: 8px; }
+            .pcx-update__actions .pcx-btn { flex: 1; height: 34px; font-size: 13px; }
+
+            /* Уведомления */
+            .pcx-toast {
+                position: fixed; top: 20px; right: 20px; z-index: 10005;
+                display: flex; align-items: center; gap: 10px;
+                max-width: 400px; padding: 13px 16px;
+                border-radius: 12px; background: #17171C; color: #fff;
+                font-size: 13.5px; font-weight: 500; line-height: 1.4;
+                box-shadow: 0 16px 40px rgba(16, 16, 28, 0.28);
+                animation: pcx-slide 0.22s ease-out;
+            }
+            .pcx-toast::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: #4ECB8D; }
+            .pcx-toast--error::before { background: #FF6B6B; }
+            .pcx-toast--warning::before { background: #FFB454; }
+            .pcx-toast--info::before { background: #6BA8FF; }
+            @keyframes pcx-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+        `;
+        document.head.appendChild(style);
+    }
+
     function createPromoButton() {
         if (!window.location.href.includes('/leads/detail/')) return;
+
+        injectStyles();
 
         const existingBtn = document.getElementById('promo-codes-main-btn');
         if (existingBtn) return;
 
         const button = document.createElement('button');
         button.id = 'promo-codes-main-btn';
-        button.innerHTML = 'Промокоды';
-        button.style.cssText = `
-            position: fixed;
-            bottom: 160px;
-            right: 20px;
-            padding: 12px 20px;
-            background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            font-family: "Gotham Rounded", "Avenir", "Century Gothic", "Trebuchet MS", "Arial Rounded MT Bold", sans-serif;
-            box-shadow: 0 4px 15px rgba(255, 184, 209, 0.4);
-            z-index: 9998;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        `;
-
-        button.onmouseover = () => {
-            button.style.transform = 'translateY(-2px)';
-            button.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
-            button.style.background = 'linear-gradient(135deg, #FFC2D4 0%, #FFB8D1 100%)';
-        };
-        button.onmouseout = () => {
-            button.style.transform = 'translateY(0)';
-            button.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.4)';
-            button.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
-        };
-
+        button.className = 'pcx';
+        button.innerHTML = `${ICONS.gift}<span>Промокоды</span>`;
         button.onclick = async () => await openPromoModal();
         document.body.appendChild(button);
     }
 
+    const PROMO_TABS = [
+        { key: 'check', label: 'Проверка' },
+        { key: 'list', label: 'Промокоды' },
+        { key: 'bonus', label: 'Бонусы' },
+        { key: 'add', label: 'Добавить промокод' },
+        { key: 'analytics', label: 'Аналитика' },
+        { key: 'settings', label: 'Настройки' }
+    ];
+
     function createPromoModal() {
+        injectStyles();
+
         const overlay = document.createElement('div');
         overlay.id = 'promo-codes-overlay';
-        overlay.style.cssText = `
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 9999;
-            backdrop-filter: blur(5px);
-        `;
+        overlay.style.display = 'none';
         overlay.onclick = (e) => {
             if (e.target === overlay) closePromoModal();
         };
 
         const modal = document.createElement('div');
         modal.id = 'promo-codes-modal';
-        modal.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 90%;
-            max-width: 800px;
-            max-height: 85vh;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            z-index: 10000;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+        modal.innerHTML = `
+            <div class="pcx-head">
+                <div>
+                    <h2 class="pcx-head__title">Промокоды и бонусы</h2>
+                    <p class="pcx-head__sub">Проверка кодов, начисление баллов и аналитика</p>
+                </div>
+                <button id="close-promo-modal-btn" class="pcx-iconbtn" title="Закрыть">${ICONS.close}</button>
+            </div>
+
+            <div class="pcx-tabs">
+                ${PROMO_TABS.map((tab, i) => `
+                    <button class="promo-tab${i === 0 ? ' active' : ''}" data-tab="${tab.key}">${tab.label}</button>
+                `).join('')}
+            </div>
+
+            <div id="promo-modal-content"></div>
         `;
 
-        const header = document.createElement('div');
-        header.style.cssText = `
-            padding: 20px 25px;
-            background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
-            color: white;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        `;
-        header.innerHTML = `
-            <h2 style="margin: 0; font-size: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Управление промокодами</h2>
-            <button id="close-promo-modal-btn" style="
-                background: transparent;
-                border: none;
-                color: white;
-                font-size: 28px;
-                cursor: pointer;
-                line-height: 1;
-                transition: all 0.2s;
-            ">&times;</button>
-        `;
-
-        const tabs = document.createElement('div');
-        tabs.style.cssText = `
-            display: flex;
-            background: #f5f5f5;
-            border-bottom: 2px solid #e0e0e0;
-        `;
-        tabs.innerHTML = `
-            <button class="promo-tab active" data-tab="check" style="
-                flex: 1;
-                padding: 15px;
-                background: white;
-                border: none;
-                border-bottom: 3px solid #FFB8D1;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #FFB8D1;
-                transition: all 0.2s;
-            ">Проверка промокода</button>
-            <button class="promo-tab" data-tab="list" style="
-                flex: 1;
-                padding: 15px;
-                background: transparent;
-                border: none;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #666;
-                transition: all 0.2s;
-            ">Промокоды</button>
-            <button class="promo-tab" data-tab="bonus" style="
-                flex: 1;
-                padding: 15px;
-                background: transparent;
-                border: none;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #666;
-                transition: all 0.2s;
-            ">Бонусы</button>
-            <button class="promo-tab" data-tab="add" style="
-                flex: 1;
-                padding: 15px;
-                background: transparent;
-                border: none;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #666;
-                transition: all 0.2s;
-            ">Добавить промокод</button>
-            <button class="promo-tab" data-tab="analytics" style="
-                flex: 1;
-                padding: 15px;
-                background: transparent;
-                border: none;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #666;
-                transition: all 0.2s;
-            ">Аналитика</button>
-            <button class="promo-tab" data-tab="settings" style="
-                flex: 1;
-                padding: 15px;
-                background: transparent;
-                border: none;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                color: #666;
-                transition: all 0.2s;
-            ">Настройки</button>
-        `;
-
-        const content = document.createElement('div');
-        content.id = 'promo-modal-content';
-        content.style.cssText = `
-            flex: 1;
-            overflow-y: auto;
-            padding: 25px;
-        `;
-
-        modal.appendChild(header);
-        modal.appendChild(tabs);
-        modal.appendChild(content);
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
 
         document.getElementById('close-promo-modal-btn').onclick = closePromoModal;
 
-        const tabButtons = tabs.querySelectorAll('.promo-tab');
-        tabButtons.forEach(btn => {
+        modal.querySelectorAll('.promo-tab').forEach(btn => {
             btn.onclick = () => switchTab(btn.dataset.tab);
         });
     }
@@ -257,24 +487,13 @@
     function switchTab(tabName) {
         // Проверка прав администратора для вкладок "Добавить промокод" и "Аналитика"
         if ((tabName === 'add' || tabName === 'analytics') && !isAdminAuthorized) {
-            showNotification('🔒 Доступ запрещён. Требуется авторизация администратора в разделе "Настройки"', 'warning');
+            showNotification('Доступ запрещён. Требуется авторизация администратора в разделе "Настройки"', 'warning');
             switchTab('settings');
             return;
         }
 
-        const tabs = document.querySelectorAll('.promo-tab');
-        tabs.forEach(tab => {
-            if (tab.dataset.tab === tabName) {
-                tab.style.background = 'white';
-                tab.style.borderBottom = '3px solid #FFB8D1';
-                tab.style.color = '#FFB8D1';
-                tab.classList.add('active');
-            } else {
-                tab.style.background = 'transparent';
-                tab.style.borderBottom = 'none';
-                tab.style.color = '#666';
-                tab.classList.remove('active');
-            }
+        document.querySelectorAll('.promo-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.tab === tabName);
         });
 
         const content = document.getElementById('promo-modal-content');
@@ -297,52 +516,51 @@
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокод:</label>
                     <input type="text" id="promo-code-input" placeholder="Введите промокод" 
-                        style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                 </div>
                 
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон клиента:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Телефон клиента:</label>
                     <input type="text" id="client-phone-input" placeholder="+7 (999) 123-45-67" 
-                        style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <div id="phone-hint" style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Телефон подтягивается автоматически из карточки контакта</div>
+                        style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <div id="phone-hint" style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Телефон подтягивается автоматически из карточки контакта</div>
                 </div>
                 
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Сумма заказа (опционально):</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Сумма заказа (опционально):</label>
                     <input type="number" id="order-amount-input" placeholder="5000" value="${currentLeadBudget}"
-                        style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Бюджет автоматически подставлен из сделки</div>
+                        style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Бюджет автоматически подставлен из сделки</div>
                 </div>
 
-                <div id="employee-referral-block" style="display: none; margin-bottom: 20px; background: linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); padding: 15px; border-radius: 8px; border: 2px solid #FFB8D1;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #FF69B4; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">🎁 От кого пришёл клиент:</label>
-                    <select id="employee-referral-select" style="width: 100%; padding: 12px; border: 2px solid #FFB8D1; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; background: white;">
+                <div id="employee-referral-block" style="display: none; margin-bottom: 20px; background: #FDEFF4; padding: 15px; border-radius: 10px; border: 1px solid #E7E7EC;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">От кого пришёл клиент:</label>
+                    <select id="employee-referral-select" style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background: white;">
                         <option value="">-- Выберите сотрудника --</option>
                     </select>
-                    <div style="font-size: 12px; color: #FF69B4; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Укажите сотрудника, чей друг использует промокод</div>
+                    <div style="font-size: 12px; color: #E6407A; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Укажите сотрудника, чей друг использует промокод</div>
                 </div>
 
                 <button id="check-promo-btn" style="
                     width: 100%;
                     padding: 15px;
-                    background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                    background: #E6407A;
                     color: white;
                     border: none;
-                    border-radius: 8px;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 16px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 20px;
-                    box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Проверить промокод</button>
                 
                 <div id="promo-result" style="
                     padding: 20px;
-                    border-radius: 8px;
+                    border-radius: 10px;
                     display: none;
                 "></div>
             </div>
@@ -351,12 +569,8 @@
         const checkBtn = document.getElementById('check-promo-btn');
         checkBtn.onclick = checkPromoCode;
         checkBtn.onmouseover = () => {
-            checkBtn.style.transform = 'translateY(-2px)';
-            checkBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
         };
         checkBtn.onmouseout = () => {
-            checkBtn.style.transform = 'translateY(0)';
-            checkBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
         
         document.getElementById('promo-code-input').addEventListener('keypress', (e) => {
@@ -430,14 +644,14 @@
         if (phone) {
             phoneInput.value = phone;
             if (phoneHint) {
-                phoneHint.textContent = '✓ Телефон подтянут автоматически из карточки контакта';
+                phoneHint.textContent = 'Телефон подтянут автоматически из карточки контакта';
                 phoneHint.style.color = '#28a745';
             }
             console.log('[Промокоды] Телефон автоматически заполнен:', phone);
         } else {
             if (phoneHint) {
                 phoneHint.textContent = 'Телефон не найден в карточке контакта. Введите вручную';
-                phoneHint.style.color = '#999';
+                phoneHint.style.color = '#9C9CA8';
             }
             console.log('[Промокоды] Телефон не найден в карточке контакта');
         }
@@ -447,14 +661,14 @@
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод:*</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокод:*</label>
                     <input type="text" id="new-promo-code" placeholder="MAMA3" 
-                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; text-transform: uppercase; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; text-transform: uppercase; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                 </div>
                 
                 <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Тип промокода:*</label>
-                    <select id="new-promo-type" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Тип промокода:*</label>
+                    <select id="new-promo-type" style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         <option value="многоразовый">Многоразовый</option>
                         <option value="одноразовый">Одноразовый</option>
                         <option value="персонализированный">Персонализированный</option>
@@ -465,13 +679,13 @@
                 
                 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <div>
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Скидка:*</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Скидка:*</label>
                         <input type="number" id="new-promo-discount" placeholder="10" 
-                            style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     </div>
                     <div>
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Тип:</label>
-                        <select id="new-promo-discount-type" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Тип:</label>
+                        <select id="new-promo-discount-type" style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             <option value="процент">%</option>
                             <option value="сумма">₽</option>
                         </select>
@@ -479,127 +693,125 @@
                 </div>
                 
                 <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Минимальная сумма заказа:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Минимальная сумма заказа:</label>
                     <input type="number" id="new-promo-min-amount" placeholder="3000" 
-                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                 </div>
                 
                 <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Срок действия:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Срок действия:</label>
                     <input type="date" id="new-promo-expiry" 
-                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #333;">
+                        style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; background: white; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: #16161A;">
                 </div>
                 
                 <div style="margin-bottom: 15px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Максимальное количество использований:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Максимальное количество использований:</label>
                     <input type="number" id="new-promo-max-usage" placeholder="100" 
-                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                 </div>
                 
                 <div style="margin-bottom: 15px; display: none;" id="phone-binding-block">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Привязка к телефонам:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Привязка к телефонам:</label>
                     <div id="phone-bindings-list" style="margin-bottom: 10px;"></div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end;">
                         <div>
                             <input type="text" id="new-phone-input" placeholder="+7 999 123-45-67"
-                                style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         </div>
                         <div>
                             <input type="text" id="new-phone-name-input" placeholder="Имя (опционально)"
-                                style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         </div>
                         <button type="button" id="add-phone-btn" style="
                             padding: 10px 15px;
-                            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                            background: #2E9E63;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             white-space: nowrap;
                         ">+ Добавить</button>
                     </div>
-                    <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Добавьте телефоны сотрудников, которым разрешено использовать этот промокод</div>
+                    <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Добавьте телефоны сотрудников, которым разрешено использовать этот промокод</div>
                 </div>
                 
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Описание:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Описание:</label>
                     <textarea id="new-promo-description" placeholder="Описание промокода" rows="3"
-                        style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"></textarea>
+                        style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"></textarea>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                     <button id="add-promo-google-btn" style="
                         padding: 15px;
-                        background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                        background: #E6407A;
                         color: white;
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 14px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        box-shadow: 0 4px 15px rgba(255, 184, 209, 0.4);
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                         opacity: 1;
                     ">Сохранить в Google Таблицу</button>
                     
                     <button id="add-promo-amocrm-btn" style="
                         padding: 15px;
-                        background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                        background: #E6407A;
                         color: white;
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 14px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        box-shadow: 0 4px 15px rgba(255, 184, 209, 0.4);
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                         opacity: 1;
                     ">Сохранить в amoCRM</button>
                 </div>
                 
-                <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 6px; display: none;"></div>
+                <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 10px; display: none;"></div>
 
-                <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
+                <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
 
-                <div style="background: linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); padding: 20px; border-radius: 8px; border: 2px solid #FFB8D1;">
-                    <h3 style="margin: 0 0 20px 0; font-size: 16px; color: #FF69B4; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                        🎁 Промокод для друзей сотрудников
+                <div style="background: #FDEFF4; padding: 20px; border-radius: 10px; border: 1px solid #E7E7EC;">
+                    <h3 style="margin: 0 0 20px 0; font-size: 16px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                         Промокод для друзей сотрудников
                     </h3>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Код промокода:</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Код промокода:</label>
                         <input type="text" id="friends-promo-code-input" placeholder="ДРУЗЬЯ15"
-                            style="width: 100%; padding: 12px; border: 2px solid #FFB8D1; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                        <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокод который выдаётся друзьям сотрудников (15% скидка)</div>
+                            style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                        <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокод который выдаётся друзьям сотрудников (15% скидка)</div>
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Список сотрудников (по одному на строку):</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список сотрудников (по одному на строку):</label>
                         <textarea id="employees-list-input" rows="6" placeholder="Иванов Иван
 Петрова Мария
 Сидоров Алексей"
-                            style="width: 100%; padding: 12px; border: 2px solid #FFB8D1; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; resize: vertical;"></textarea>
+                            style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; resize: vertical;"></textarea>
                     </div>
 
                     <button id="save-friends-settings-btn" style="
                         width: 100%;
                         padding: 12px;
-                        background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%);
+                        background: #E6407A;
                         color: white;
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 14px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         box-shadow: 0 4px 15px rgba(255, 105, 180, 0.3);
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                    ">💾 Сохранить настройки друзей</button>
+                    ">Сохранить настройки друзей</button>
                 </div>
             </div>
         `;
@@ -665,27 +877,19 @@
         const addGoogleBtn = document.getElementById('add-promo-google-btn');
         addGoogleBtn.onclick = () => addPromoCode('google');
         addGoogleBtn.onmouseover = () => {
-            addGoogleBtn.style.transform = 'translateY(-2px)';
-            addGoogleBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
-            addGoogleBtn.style.background = 'linear-gradient(135deg, #FFC2D4 0%, #FFB8D1 100%)';
+            addGoogleBtn.style.background = '#E6407A';
         };
         addGoogleBtn.onmouseout = () => {
-            addGoogleBtn.style.transform = 'translateY(0)';
-            addGoogleBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.4)';
-            addGoogleBtn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
+            addGoogleBtn.style.background = '#E6407A';
         };
 
         const addAmoCRMBtn = document.getElementById('add-promo-amocrm-btn');
         addAmoCRMBtn.onclick = () => addPromoCode('amocrm');
         addAmoCRMBtn.onmouseover = () => {
-            addAmoCRMBtn.style.transform = 'translateY(-2px)';
-            addAmoCRMBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
-            addAmoCRMBtn.style.background = 'linear-gradient(135deg, #FFC2D4 0%, #FFB8D1 100%)';
+            addAmoCRMBtn.style.background = '#E6407A';
         };
         addAmoCRMBtn.onmouseout = () => {
-            addAmoCRMBtn.style.transform = 'translateY(0)';
-            addAmoCRMBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.4)';
-            addAmoCRMBtn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
+            addAmoCRMBtn.style.background = '#E6407A';
         };
 
         // Обработчик кнопки сохранения друзей
@@ -693,14 +897,12 @@
         if (saveFriendsBtn) {
             saveFriendsBtn.onclick = saveFriendsSettings;
             saveFriendsBtn.onmouseover = () => {
-                saveFriendsBtn.style.transform = 'translateY(-2px)';
                 saveFriendsBtn.style.boxShadow = '0 8px 25px rgba(255, 105, 180, 0.5)';
-                saveFriendsBtn.style.background = 'linear-gradient(135deg, #FF85C1 0%, #FF69B4 100%)';
+                saveFriendsBtn.style.background = '#FF85C1';
             };
             saveFriendsBtn.onmouseout = () => {
-                saveFriendsBtn.style.transform = 'translateY(0)';
                 saveFriendsBtn.style.boxShadow = '0 4px 15px rgba(255, 105, 180, 0.3)';
-                saveFriendsBtn.style.background = 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)';
+                saveFriendsBtn.style.background = '#E6407A';
             };
         }
     }
@@ -784,18 +986,18 @@
         if (!container) return;
 
         if (!window.promoPhoneBindings || window.promoPhoneBindings.length === 0) {
-            container.innerHTML = '<div style="color: #999; font-size: 13px; padding: 10px; text-align: center; font-family: \'Gotham Rounded\', \'Avenir\', \'Century Gothic\', \'Trebuchet MS\', \'Arial Rounded MT Bold\', sans-serif;">Телефоны не добавлены</div>';
+            container.innerHTML = '<div style="color: #9C9CA8; font-size: 13px; padding: 10px; text-align: center; font-family: Manrope, -apple-system, sans-serif;">Телефоны не добавлены</div>';
             return;
         }
 
         container.innerHTML = window.promoPhoneBindings.map((binding, index) => `
-            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #f9f9f9; border-radius: 6px; margin-bottom: 6px; border: 1px solid #e0e0e0;">
-                <div style="flex: 1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <span style="font-weight: 600; color: #333;">${binding.phone}</span>
-                    ${binding.name ? `<span style="color: #666; margin-left: 8px;">— ${binding.name}</span>` : ''}
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #FAFAFB; border-radius: 10px; margin-bottom: 6px; border: 1px solid #E7E7EC;">
+                <div style="flex: 1; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <span style="font-weight: 600; color: #16161A;">${binding.phone}</span>
+                    ${binding.name ? `<span style="color: #6E6E7A; margin-left: 8px;">— ${binding.name}</span>` : ''}
                 </div>
                 <button type="button" class="remove-phone-btn" data-index="${index}" style="
-                    background: #ff4444;
+                    background: #D64545;
                     color: white;
                     border: none;
                     border-radius: 50%;
@@ -803,7 +1005,7 @@
                     height: 24px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
+                    font-weight: 600;
                     line-height: 1;
                     display: flex;
                     align-items: center;
@@ -876,7 +1078,7 @@
 
         const phoneBindings = promo.phoneBindings || parsePhoneBindings(promo.phoneBinding);
         const discountText = promo.discountType === 'процент' ? `${promo.discount}%` : `${promo.discount} ₽`;
-        const statusColor = promo.status === 'активен' ? '#4CAF50' : '#999';
+        const statusColor = promo.status === 'активен' ? '#2E9E63' : '#9C9CA8';
         const totalUsages = phoneBindings.reduce((sum, b) => sum + (b.usages ? b.usages.length : 0), 0);
 
         const overlay = document.createElement('div');
@@ -916,30 +1118,30 @@
                 const usagesCount = binding.usages ? binding.usages.length : 0;
                 const usagesHtml = binding.usages && binding.usages.length > 0
                     ? binding.usages.map(u => `
-                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: #666;">
+                        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: #6E6E7A;">
                             <span>• ${u.date}</span>
-                            ${u.leadUrl ? `<a href="${u.leadUrl}" target="_blank" style="color: #FFB8D1; text-decoration: none;">Сделка 🔗</a>` : ''}
+                            ${u.leadUrl ? `<a href="${u.leadUrl}"target="_blank"style="color: #E6407A; text-decoration: none;">Сделка </a>`: ''}
                         </div>
                     `).join('')
-                    : '<div style="font-size: 12px; color: #999; padding: 4px 0;">Нет использований</div>';
+                    : '<div style="font-size: 12px; color: #9C9CA8; padding: 4px 0;">Нет использований</div>';
 
                 return `
-                    <div class="phone-binding-item" data-phone-index="${idx}" style="background: #f9f9f9; border-radius: 8px; padding: 12px; margin-bottom: 8px; border: 1px solid #e0e0e0;">
+                    <div class="phone-binding-item" data-phone-index="${idx}" style="background: #FAFAFB; border-radius: 10px; padding: 12px; margin-bottom: 8px; border: 1px solid #E7E7EC;">
                         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
                             <div>
-                                <div style="font-weight: 600; color: #333; font-size: 14px; font-family: 'Gotham Rounded', sans-serif;">
+                                <div style="font-weight: 600; color: #16161A; font-size: 14px; font-family: Manrope, -apple-system, sans-serif;">
                                     ${binding.name || 'Без имени'}
                                 </div>
-                                <div style="color: #666; font-size: 13px; font-family: 'Gotham Rounded', sans-serif;">
+                                <div style="color: #6E6E7A; font-size: 13px; font-family: Manrope, -apple-system, sans-serif;">
                                     ${binding.phone}
                                 </div>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="background: #FFB8D1; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: bold;">
+                                <span style="background: #E6407A; color: white; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;">
                                     ${usagesCount} исп.
                                 </span>
                                 <button class="remove-binding-btn" data-phone="${binding.phone}" style="
-                                    background: #ff4444;
+                                    background: #D64545;
                                     color: white;
                                     border: none;
                                     border-radius: 50%;
@@ -953,25 +1155,25 @@
                                 ">×</button>
                             </div>
                         </div>
-                        <div style="border-top: 1px solid #e0e0e0; padding-top: 8px; margin-top: 8px;">
-                            <div style="font-size: 11px; color: #999; margin-bottom: 4px; font-family: 'Gotham Rounded', sans-serif;">История использований:</div>
+                        <div style="border-top: 1px solid #E7E7EC; padding-top: 8px; margin-top: 8px;">
+                            <div style="font-size: 11px; color: #9C9CA8; margin-bottom: 4px; font-family: Manrope, -apple-system, sans-serif;">История использований:</div>
                             ${usagesHtml}
                         </div>
                     </div>
                 `;
             }).join('');
         } else {
-            phonesHtml = '<div style="text-align: center; color: #999; padding: 20px; font-family: \'Gotham Rounded\', sans-serif;">Телефоны не привязаны</div>';
+            phonesHtml = '<div style="text-align: center; color: #9C9CA8; padding: 20px; font-family: Manrope, -apple-system, sans-serif;">Телефоны не привязаны</div>';
         }
 
         modal.innerHTML = `
-            <div style="background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%); padding: 20px; color: white;">
+            <div style="background: #E6407A; padding: 20px; color: white;">
                 <div style="display: flex; justify-content: space-between; align-items: start;">
                     <div>
-                        <div style="font-size: 24px; font-weight: bold; font-family: 'Gotham Rounded', sans-serif; margin-bottom: 5px;">${promo.code}</div>
-                        <div style="font-size: 14px; opacity: 0.9; font-family: 'Gotham Rounded', sans-serif;">
+                        <div style="font-size: 24px; font-weight: 600; font-family: Manrope, -apple-system, sans-serif; margin-bottom: 5px;">${promo.code}</div>
+                        <div style="font-size: 14px; opacity: 0.9; font-family: Manrope, -apple-system, sans-serif;">
                             <span style="background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 4px; margin-right: 8px;">${promo.type}</span>
-                            <span style="font-weight: 600;">● ${promo.status}</span>
+                            <span style="font-weight: 600;">${promo.status}</span>
                         </div>
                     </div>
                     <button id="close-promo-details-btn" style="
@@ -991,78 +1193,78 @@
             </div>
             <div style="padding: 20px; overflow-y: auto; flex: 1;">
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
-                    <div style="text-align: center; background: #f9f9f9; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', sans-serif;">${discountText}</div>
-                        <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', sans-serif;">Скидка</div>
+                    <div style="text-align: center; background: #FAFAFB; padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, sans-serif;">${discountText}</div>
+                        <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, sans-serif;">Скидка</div>
                     </div>
-                    <div style="text-align: center; background: #f9f9f9; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', sans-serif;">${phoneBindings.length}</div>
-                        <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', sans-serif;">Телефонов</div>
+                    <div style="text-align: center; background: #FAFAFB; padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, sans-serif;">${phoneBindings.length}</div>
+                        <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, sans-serif;">Телефонов</div>
                     </div>
-                    <div style="text-align: center; background: #f9f9f9; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', sans-serif;">${totalUsages}</div>
-                        <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', sans-serif;">Использований</div>
+                    <div style="text-align: center; background: #FAFAFB; padding: 15px; border-radius: 10px;">
+                        <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, sans-serif;">${totalUsages}</div>
+                        <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, sans-serif;">Использований</div>
                     </div>
                 </div>
 
                 ${promo.description ? `
-                    <div style="background: #f0f0f0; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; color: #666; font-family: 'Gotham Rounded', sans-serif;">
+                    <div style="background: #F1F1F4; padding: 12px; border-radius: 10px; margin-bottom: 20px; font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, sans-serif;">
                         ${promo.description}
                     </div>
                 ` : ''}
 
                 <div style="margin-bottom: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <h3 style="margin: 0; font-size: 16px; color: #333; font-family: 'Gotham Rounded', sans-serif;">Привязанные телефоны</h3>
+                        <h3 style="margin: 0; font-size: 16px; color: #16161A; font-family: Manrope, -apple-system, sans-serif;">Привязанные телефоны</h3>
                         <button id="add-phone-to-promo-btn" style="
-                            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                            background: #2E9E63;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             padding: 8px 15px;
                             cursor: pointer;
                             font-size: 13px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, sans-serif;
                         ">+ Добавить телефон</button>
                     </div>
-                    <div id="add-phone-form" style="display: none; background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <div id="add-phone-form" style="display: none; background: #EAF6F0; padding: 15px; border-radius: 10px; margin-bottom: 15px;">
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
                             <input type="text" id="modal-new-phone" placeholder="+7 999 123-45-67" style="
                                 padding: 10px;
-                                border: 2px solid #ddd;
-                                border-radius: 6px;
+                                border: 1px solid #E7E7EC;
+                                border-radius: 10px;
                                 font-size: 14px;
-                                font-family: 'Gotham Rounded', sans-serif;
+                                font-family: Manrope, -apple-system, sans-serif;
                             ">
                             <input type="text" id="modal-new-name" placeholder="Имя (опционально)" style="
                                 padding: 10px;
-                                border: 2px solid #ddd;
-                                border-radius: 6px;
+                                border: 1px solid #E7E7EC;
+                                border-radius: 10px;
                                 font-size: 14px;
-                                font-family: 'Gotham Rounded', sans-serif;
+                                font-family: Manrope, -apple-system, sans-serif;
                             ">
                         </div>
                         <div style="display: flex; gap: 10px;">
                             <button id="save-new-phone-btn" style="
                                 flex: 1;
-                                background: #4CAF50;
+                                background: #2E9E63;
                                 color: white;
                                 border: none;
-                                border-radius: 6px;
+                                border-radius: 10px;
                                 padding: 10px;
                                 cursor: pointer;
-                                font-weight: bold;
-                                font-family: 'Gotham Rounded', sans-serif;
+                                font-weight: 600;
+                                font-family: Manrope, -apple-system, sans-serif;
                             ">Сохранить</button>
                             <button id="cancel-new-phone-btn" style="
-                                background: #f5f5f5;
-                                color: #666;
+                                background: #F7F7F9;
+                                color: #6E6E7A;
                                 border: none;
-                                border-radius: 6px;
+                                border-radius: 10px;
                                 padding: 10px;
                                 cursor: pointer;
-                                font-family: 'Gotham Rounded', sans-serif;
+                                font-family: Manrope, -apple-system, sans-serif;
                             ">Отмена</button>
                         </div>
                     </div>
@@ -1217,59 +1419,59 @@
         
         container.innerHTML = `
             <div style="max-width: 900px; margin: 0 auto;">
-                <div style="background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);">
-                    <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Текущий баланс баллов</div>
-                    <div id="current-bonus-display" style="font-size: 48px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                <div style="background: #E6407A; padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px;">
+                    <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.9;">Текущий баланс баллов</div>
+                    <div id="current-bonus-display" style="font-size: 48px; font-weight: 600; color: white; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         ${currentBonusPoints.toFixed(2)}
                     </div>
-                    <div style="font-size: 12px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="contact-info">
+                    <div style="font-size: 12px; color: white; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.8;" id="contact-info">
                         ${currentContactId ? currentContactName : 'Контакт не определен'}
                     </div>
                 </div>
                 
                 ${isAdminAuthorized ? `
-                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #4CAF50;">
-                        <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #4CAF50; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Прямое начисление/списание (Админ)</h3>
+                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #E7E7EC;">
+                        <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #2E9E63; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Прямое начисление/списание (Админ)</h3>
                         
                         <div style="margin-bottom: 20px;">
-                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов:</label>
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Количество баллов:</label>
                             <input type="number" id="bonus-points-input" placeholder="100" step="0.01"
-                                style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 16px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         </div>
                         
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <button id="add-bonus-btn" style="
                                 padding: 15px;
-                                background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                                background: #2E9E63;
                                 color: white;
                                 border: none;
-                                border-radius: 8px;
+                                border-radius: 10px;
                                 cursor: pointer;
                                 font-size: 16px;
-                                font-weight: bold;
-                                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                                font-weight: 600;
+                                font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                                 box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                            ">➕ Начислить</button>
+                            ">Начислить</button>
                             
                             <button id="subtract-bonus-btn" style="
                                 padding: 15px;
-                                background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
+                                background: #D64545;
                                 color: white;
                                 border: none;
-                                border-radius: 8px;
+                                border-radius: 10px;
                                 cursor: pointer;
                                 font-size: 16px;
-                                font-weight: bold;
-                                font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                                font-weight: 600;
+                                font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                                 box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);
                                 transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                            ">➖ Списать</button>
+                            ">Списать</button>
                         </div>
                         
                         <div id="bonus-result" style="
                             padding: 15px;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             display: none;
                             margin-top: 15px;
                         "></div>
@@ -1277,112 +1479,111 @@
                 ` : ''}
 
                 ${!isAdminAuthorized ? `
-                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #FF5252;">
-                        <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #FF5252; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">➖ Списание баллов</h3>
+                    <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #E7E7EC;">
+                        <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #D64545; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Списание баллов</h3>
 
                         <div style="margin-bottom: 20px;">
-                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов для списания:</label>
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Количество баллов для списания:</label>
                             <input type="number" id="subtract-points-input" placeholder="100" step="0.01"
-                                style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 16px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         </div>
 
                         <button id="subtract-bonus-btn-public" style="
                             width: 100%;
                             padding: 15px;
-                            background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
+                            background: #D64545;
                             color: white;
                             border: none;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 16px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);
                             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                        ">➖ Списать баллы</button>
+                        ">Списать баллы</button>
 
                         <div id="subtract-result" style="
                             padding: 15px;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             display: none;
                             margin-top: 15px;
                         "></div>
                     </div>
                 ` : ''}
 
-                <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 2px solid #FFB8D1;">
-                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📝 Создать заявку на начисление</h3>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #E7E7EC;">
+                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Создать заявку на начисление</h3>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Количество баллов для начисления:</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Количество баллов для начисления:</label>
                         <input type="number" id="request-points-input" placeholder="100" step="0.01"
-                            style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Причина начисления (можно выбрать несколько):</label>
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Причина начисления (можно выбрать несколько):</label>
                         <div style="display: flex; flex-direction: column; gap: 10px;">
                             ${Object.values(REASON_CATEGORIES).filter(cat => cat.key !== 'custom').map(cat => `
-                                <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #f9f9f9; border-radius: 6px; border: 1px solid #e0e0e0; transition: all 0.2s;">
+                                <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #FAFAFB; border-radius: 10px; border: 1px solid #E7E7EC; transition: all 0.2s;">
                                     <input type="checkbox" name="reason-category" value="${cat.key}"
-                                        style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #FFB8D1;">
-                                    <span style="font-size: 14px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${cat.icon} ${cat.label}</span>
+                                        style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #E6407A;">
+                                    <span style="font-size: 14px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${cat.label}</span>
                                 </label>
                             `).join('')}
-                            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #f9f9f9; border-radius: 6px; border: 1px solid #e0e0e0; transition: all 0.2s;">
+                            <label style="display: flex; align-items: center; cursor: pointer; padding: 10px; background: #FAFAFB; border-radius: 10px; border: 1px solid #E7E7EC; transition: all 0.2s;">
                                 <input type="checkbox" name="reason-category" value="custom" id="custom-reason-checkbox"
-                                    style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #FFB8D1;">
-                                <span style="font-size: 14px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✏️ Другое:</span>
+                                    style="width: 18px; height: 18px; margin-right: 10px; cursor: pointer; accent-color: #E6407A;">
+                                <span style="font-size: 14px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Другое:</span>
                                 <input type="text" id="custom-reason-input" placeholder="Укажите свою причину..."
-                                    style="flex: 1; margin-left: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                    style="flex: 1; margin-left: 10px; padding: 8px; border: 1px solid #E7E7EC; border-radius: 4px; font-size: 13px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             </label>
                         </div>
                     </div>
 
                     <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Примечание (опционально):</label>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Примечание (опционально):</label>
                         <textarea id="request-note-input" placeholder="Опишите ситуацию подробнее..." rows="2"
-                            style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"></textarea>
+                            style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"></textarea>
                     </div>
 
                     <button id="create-request-btn" style="
                         width: 100%;
                         padding: 15px;
-                        background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                        background: #E6407A;
                         color: white;
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 16px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Отправить заявку</button>
                     
                     <div id="request-result" style="
                         padding: 15px;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         display: none;
                         margin-top: 15px;
                     "></div>
                 </div>
                 
-                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #E7E7EC;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📋 Заявки на начисление</h3>
+                        <h3 style="margin: 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Заявки на начисление</h3>
                         <button id="sync-requests-btn" style="
                             padding: 8px 16px;
-                            background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                            background: #E6407A;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 13px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
-                        ">🔄 Синхронизировать</button>
+                        ">Синхронизировать</button>
                     </div>
                     
                     <div id="bonus-requests-list" style="max-height: 500px; overflow-y: auto;">
@@ -1390,59 +1591,59 @@
                     </div>
                 </div>
 
-                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0; margin-top: 30px;">
+                <div style="background: #F7F7F9; padding: 20px; border-radius: 14px; margin-top: 30px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0; font-size: 18px; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Аналитика по причинам начисления</h3>
+                        <h3 style="margin: 0; font-size: 18px; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Аналитика по причинам начисления</h3>
                         <button id="load-category-analytics-btn" style="
                             padding: 8px 16px;
-                            background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
+                            background: #7B57C4;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 13px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
-                        ">📈 Загрузить аналитику</button>
+                        ">Загрузить аналитику</button>
                     </div>
 
                     <div id="category-analytics-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
-                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">🚚 Проблемы с доставкой</div>
-                            <div id="category-delivery-count" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-delivery-points">0 баллов</div>
+                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                            <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблемы с доставкой</div>
+                            <div id="category-delivery-count" style="font-size: 28px; font-weight: 600; color: #C77A18; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-delivery-points">0 баллов</div>
                         </div>
 
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #E91E63;">
-                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">🌸 Проблема с качеством</div>
-                            <div id="category-quality-count" style="font-size: 28px; font-weight: bold; color: #E91E63; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-quality-points">0 баллов</div>
+                        <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #E7E7EC;">
+                            <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблема с качеством</div>
+                            <div id="category-quality-count" style="font-size: 28px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-quality-points">0 баллов</div>
                         </div>
 
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #2196F3;">
-                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✉️ Жалобы на открытку</div>
-                            <div id="category-card-count" style="font-size: 28px; font-weight: bold; color: #2196F3; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-card-points">0 баллов</div>
+                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                            <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Жалобы на открытку</div>
+                            <div id="category-card-count" style="font-size: 28px; font-weight: 600; color: #3B7BD6; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-card-points">0 баллов</div>
                         </div>
 
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #607D8B;">
-                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">❓ Прочие проблемы</div>
-                            <div id="category-other_problems-count" style="font-size: 28px; font-weight: bold; color: #607D8B; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-other_problems-points">0 баллов</div>
+                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                            <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Прочие проблемы</div>
+                            <div id="category-other_problems-count" style="font-size: 28px; font-weight: 600; color: #607D8B; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-other_problems-points">0 баллов</div>
                         </div>
 
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0; grid-column: span 2;">
-                            <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">✏️ Другое (своя причина)</div>
-                            <div id="category-custom-count" style="font-size: 28px; font-weight: bold; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                            <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="category-custom-points">0 баллов</div>
+                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px; grid-column: span 2;">
+                            <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Другое (своя причина)</div>
+                            <div id="category-custom-count" style="font-size: 28px; font-weight: 600; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-custom-points">0 баллов</div>
                         </div>
                     </div>
 
-                    <div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%); border-radius: 8px; text-align: center;">
-                        <div style="font-size: 12px; color: #666; margin-bottom: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Всего заявок</div>
-                        <div id="category-total-requests" style="font-size: 24px; font-weight: bold; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                        <div id="category-total-points" style="font-size: 14px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0 баллов</div>
+                    <div style="margin-top: 20px; padding: 15px; background: #F7F7F9; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 12px; color: #6E6E7A; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Всего заявок</div>
+                        <div id="category-total-requests" style="font-size: 24px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div id="category-total-points" style="font-size: 14px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0 баллов</div>
                     </div>
                 </div>
             </div>
@@ -1454,21 +1655,17 @@
             
             addBtn.onclick = () => modifyBonusPoints('add');
             addBtn.onmouseover = () => {
-                addBtn.style.transform = 'translateY(-2px)';
                 addBtn.style.boxShadow = '0 8px 25px rgba(76, 175, 80, 0.5)';
             };
             addBtn.onmouseout = () => {
-                addBtn.style.transform = 'translateY(0)';
                 addBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
             };
             
             subtractBtn.onclick = () => modifyBonusPoints('subtract');
             subtractBtn.onmouseover = () => {
-                subtractBtn.style.transform = 'translateY(-2px)';
                 subtractBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
             };
             subtractBtn.onmouseout = () => {
-                subtractBtn.style.transform = 'translateY(0)';
                 subtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
             };
         }
@@ -1478,11 +1675,9 @@
         if (publicSubtractBtn) {
             publicSubtractBtn.onclick = () => modifyBonusPoints('subtract', 'subtract-points-input', 'subtract-result');
             publicSubtractBtn.onmouseover = () => {
-                publicSubtractBtn.style.transform = 'translateY(-2px)';
                 publicSubtractBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
             };
             publicSubtractBtn.onmouseout = () => {
-                publicSubtractBtn.style.transform = 'translateY(0)';
                 publicSubtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
             };
         }
@@ -1490,12 +1685,8 @@
         const createRequestBtn = document.getElementById('create-request-btn');
         createRequestBtn.onclick = createBonusRequest;
         createRequestBtn.onmouseover = () => {
-            createRequestBtn.style.transform = 'translateY(-2px)';
-            createRequestBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
         };
         createRequestBtn.onmouseout = () => {
-            createRequestBtn.style.transform = 'translateY(0)';
-            createRequestBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
         
         const syncRequestsBtn = document.getElementById('sync-requests-btn');
@@ -1503,11 +1694,11 @@
             syncRequestsBtn.onclick = () => syncBonusRequests(false);
             syncRequestsBtn.onmouseover = () => {
                 syncRequestsBtn.style.transform = 'scale(1.05)';
-                syncRequestsBtn.style.background = 'linear-gradient(135deg, #FFC2D4 0%, #FFB8D1 100%)';
+                syncRequestsBtn.style.background = '#E6407A';
             };
             syncRequestsBtn.onmouseout = () => {
                 syncRequestsBtn.style.transform = 'scale(1)';
-                syncRequestsBtn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
+                syncRequestsBtn.style.background = '#E6407A';
             };
         }
 
@@ -1517,11 +1708,11 @@
             loadCategoryAnalyticsBtn.onclick = loadCategoryAnalytics;
             loadCategoryAnalyticsBtn.onmouseover = () => {
                 loadCategoryAnalyticsBtn.style.transform = 'scale(1.05)';
-                loadCategoryAnalyticsBtn.style.background = 'linear-gradient(135deg, #AB47BC 0%, #9C27B0 100%)';
+                loadCategoryAnalyticsBtn.style.background = '#AB47BC';
             };
             loadCategoryAnalyticsBtn.onmouseout = () => {
                 loadCategoryAnalyticsBtn.style.transform = 'scale(1)';
-                loadCategoryAnalyticsBtn.style.background = 'linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%)';
+                loadCategoryAnalyticsBtn.style.background = '#7B57C4';
             };
         }
 
@@ -1537,20 +1728,20 @@
                 }
                 #google-promos-list::-webkit-scrollbar-track,
                 #amocrm-promos-list::-webkit-scrollbar-track {
-                    background: #f5f5f5;
+                    background: #F7F7F9;
                     border-radius: 4px;
                 }
                 #google-promos-list::-webkit-scrollbar-thumb {
-                    background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                    background: #E6407A;
                     border-radius: 4px;
                 }
                 #amocrm-promos-list::-webkit-scrollbar-thumb {
-                    background: linear-gradient(135deg, #FFD4E5 0%, #FFC2D4 100%);
+                    background: #FDEFF4;
                     border-radius: 4px;
                 }
                 #google-promos-list::-webkit-scrollbar-thumb:hover,
                 #amocrm-promos-list::-webkit-scrollbar-thumb:hover {
-                    background: #FF9EC4;
+                    background: #E6407A;
                 }
             </style>
         `;
@@ -1558,21 +1749,21 @@
         container.innerHTML = scrollbarStyles + `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="margin-bottom: 30px;">
-                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;">
                         <span>Промокоды из Google Таблицы</span>
-                        <span style="font-size: 16px; background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%); color: white; padding: 5px 15px; border-radius: 20px;">${promoCodesCache.length}</span>
+                        <span style="font-size: 16px; background: #E6407A; color: white; padding: 5px 15px; border-radius: 20px;">${promoCodesCache.length}</span>
                     </h3>
                     <div id="google-promos-list" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         ${renderGooglePromosList()}
                     </div>
                 </div>
                 
-                <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
+                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
                 
                 <div style="margin-bottom: 30px;">
-                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; display: flex; align-items: center; justify-content: space-between;">
+                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;">
                         <span>Промокоды из amoCRM</span>
-                        <span style="font-size: 16px; background: linear-gradient(135deg, #FFD4E5 0%, #FFC2D4 100%); color: #FF9EC4; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
+                        <span style="font-size: 16px; background: #FDEFF4; color: #E6407A; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
                     </h3>
                     <div id="amocrm-promos-list" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         ${renderAmoCRMPromosList()}
@@ -1581,29 +1772,29 @@
 
                 ${isAdminAuthorized ? renderPromoAnalyticsBlockHtml() : ''}
 
-                <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
+                <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
 
-                <div id="friends-stats-section" style="background: linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius: 12px; padding: 20px; border: 2px solid #FFB8D1;">
-                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #FF69B4; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; display: flex; align-items: center; gap: 10px;">
-                        🎁 Промокоды от сотрудников
+                <div id="friends-stats-section" style="background: #FDEFF4; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
+                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; gap: 10px;">
+                         Промокоды от сотрудников
                         <button id="refresh-friends-stats-btn" style="
                             padding: 5px 12px;
-                            background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%);
+                            background: #E6407A;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 12px;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             margin-left: auto;
-                        ">🔄 Обновить</button>
+                        ">Обновить</button>
                     </h3>
-                    <div id="friends-promo-code-display" style="font-size: 14px; color: #666; margin-bottom: 15px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                        Промокод: <strong style="color: #FF69B4;">загрузка...</strong>
+                    <div id="friends-promo-code-display" style="font-size: 14px; color: #6E6E7A; margin-bottom: 15px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                        Промокод: <strong style="color: #E6407A;">загрузка...</strong>
                     </div>
                     <div id="friends-stats-content" style="min-height: 100px;">
-                        <div style="text-align: center; padding: 30px; color: #FF69B4; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+                        <div style="text-align: center; padding: 30px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                            <div style="font-size: 24px; margin-bottom: 10px;"></div>
                             <div>Загрузка статистики...</div>
                         </div>
                     </div>
@@ -1624,7 +1815,7 @@
 
     function renderGooglePromosList() {
         if (promoCodesCache.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
+            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
         }
 
         // Создаём Set кодов из amoCRM для быстрой проверки
@@ -1637,7 +1828,7 @@
 
         return promoCodesCache.map((promo, index) => {
             const discountText = promo.discountType === 'процент' ? `${promo.discount}%` : `${promo.discount} ₽`;
-            const statusColor = promo.status === 'активен' ? '#4CAF50' : '#999';
+            const statusColor = promo.status === 'активен' ? '#2E9E63' : '#9C9CA8';
             const expiryText = promo.expiryDate ? `до ${formatDate(promo.expiryDate)}` : 'Без срока';
 
             // Парсим привязанные телефоны
@@ -1648,33 +1839,33 @@
             // Проверяем, есть ли промокод в amoCRM
             const isInAmoCRM = amoCRMCodesSet.has(promo.code.toUpperCase());
             const missingBadge = !isInAmoCRM ? `
-                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #fff3e0; border-radius: 6px; border-left: 3px solid #FF9800;">
-                    <span style="font-size: 12px; color: #E65100; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; font-weight: 600;">⚠️ Нет в amoCRM</span>
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #FCF4E8; border-radius: 10px; border-left: 3px solid #C77A18;">
+                    <span style="font-size: 12px; color: #A85F0F; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; font-weight: 600;">Нет в amoCRM</span>
                     <button class="add-to-amocrm-btn" data-promo-code="${promo.code}" style="
                         padding: 4px 10px;
-                        background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+                        background: #3B7BD6;
                         color: white;
                         border: none;
                         border-radius: 4px;
                         cursor: pointer;
                         font-size: 11px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.2s;
                         margin-left: auto;
-                    " onmouseover="this.style.background='linear-gradient(135deg, #42A5F5 0%, #2196F3 100%)'; this.style.transform='scale(1.05)'" onmouseout="this.style.background='linear-gradient(135deg, #2196F3 0%, #1976D2 100%)'; this.style.transform='scale(1)'">+ Добавить в amoCRM</button>
+                    " onmouseover="this.style.background='#42A5F5'; this.style.transform='scale(1.05)'" onmouseout="this.style.background='#3B7BD6'; this.style.transform='scale(1)'">+ Добавить в amoCRM</button>
                 </div>
             ` : '';
 
             return `
-                <div class="promo-card" data-promo-index="${index}" style="background: white; border: 2px solid ${isInAmoCRM ? '#f0f0f0' : '#FF9800'}; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative; cursor: pointer;"
-                     onmouseover="this.style.borderColor='#FFB8D1'; this.style.boxShadow='0 4px 12px rgba(255, 184, 209, 0.3)'"
-                     onmouseout="this.style.borderColor='${isInAmoCRM ? '#f0f0f0' : '#FF9800'}'; this.style.boxShadow='none'">
+                <div class="promo-card" data-promo-index="${index}" style="background: white; border: 2px solid ${isInAmoCRM ? '#F1F1F4' : '#C77A18'}; border-radius: 10px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative; cursor: pointer;"
+                     onmouseover="this.style.borderColor='#E6407A'; this.style.boxShadow='0 4px 12px rgba(255, 184, 209, 0.3)'"
+                     onmouseout="this.style.borderColor='${isInAmoCRM ? '#F1F1F4' : '#C77A18'}'; this.style.boxShadow='none'">
                     <button class="delete-google-promo-btn" data-promo-code="${promo.code}" style="
                         position: absolute;
                         top: 10px;
                         right: 10px;
-                        background: #ff4444;
+                        background: #D64545;
                         color: white;
                         border: none;
                         border-radius: 50%;
@@ -1686,32 +1877,32 @@
                         align-items: center;
                         justify-content: center;
                         transition: all 0.2s;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        font-weight: bold;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+                        font-weight: 600;
                         line-height: 1;
                         padding: 0;
                         z-index: 10;
-                    " onmouseover="this.style.background='#cc0000'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#ff4444'; this.style.transform='scale(1)'">×</button>
+                    " onmouseover="this.style.background='#B23B3B'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#D64545'; this.style.transform='scale(1)'">×</button>
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; padding-right: 30px;">
                         <div>
-                            <div style="font-size: 18px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-bottom: 5px;">${promo.code}</div>
-                            <div style="font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                                <span style="display: inline-block; padding: 2px 8px; background: #f0f0f0; border-radius: 4px; margin-right: 5px;">${promo.type}</span>
-                                <span style="color: ${statusColor}; font-weight: 600;">● ${promo.status}</span>
-                                ${isInAmoCRM ? '<span style="display: inline-block; padding: 2px 8px; background: #e8f5e9; color: #2e7d32; border-radius: 4px; margin-left: 5px; font-size: 10px;">✓ amoCRM</span>' : ''}
+                            <div style="font-size: 18px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-bottom: 5px;">${promo.code}</div>
+                            <div style="font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                                <span style="display: inline-block; padding: 2px 8px; background: #F1F1F4; border-radius: 4px; margin-right: 5px;">${promo.type}</span>
+                                <span style="color: ${statusColor}; font-weight: 600;">${promo.status}</span>
+                                ${isInAmoCRM ? '<span style="display: inline-block; padding: 2px 8px; background: #EAF6F0; color: #237A4C; border-radius: 4px; margin-left: 5px; font-size: 10px;">amoCRM</span>': ''}
                             </div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="font-size: 20px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${discountText}</div>
-                            <div style="font-size: 11px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${expiryText}</div>
+                            <div style="font-size: 20px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${discountText}</div>
+                            <div style="font-size: 11px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${expiryText}</div>
                         </div>
                     </div>
-                    ${promo.minOrderAmount ? `<div style="font-size: 12px; color: #666; margin-top: 8px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">💰 Мин. сумма: ${promo.minOrderAmount} ₽</div>` : ''}
-                    ${promo.maxUsages ? `<div style="font-size: 12px; color: #666; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Использовано: ${promo.currentUsages || 0} из ${promo.maxUsages}</div>` : ''}
-                    ${phonesCount > 0 ? `<div style="font-size: 12px; color: #666; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📱 Привязано телефонов: <strong>${phonesCount}</strong> ${totalUsages > 0 ? `(использований: ${totalUsages})` : ''}</div>` : ''}
-                    ${promo.description ? `<div style="font-size: 12px; color: #666; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0f0f0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${promo.description}</div>` : ''}
+                    ${promo.minOrderAmount ? `<div style="font-size: 12px; color: #6E6E7A; margin-top: 8px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Мин. сумма: ${promo.minOrderAmount} ₽</div>`: ''}
+                    ${promo.maxUsages ? `<div style="font-size: 12px; color: #6E6E7A; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Использовано: ${promo.currentUsages || 0} из ${promo.maxUsages}</div>`: ''}
+                    ${phonesCount >0 ? `<div style="font-size: 12px; color: #6E6E7A; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Привязано телефонов: <strong>${phonesCount}</strong>${totalUsages >0 ? `(использований: ${totalUsages})`: ''}</div>`: ''}
+                    ${promo.description ? `<div style="font-size: 12px; color: #6E6E7A; margin-top: 10px; padding-top: 10px; border-top: 1px solid #F1F1F4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${promo.description}</div>` : ''}
                     ${missingBadge}
-                    <div style="font-size: 11px; color: #999; margin-top: 8px; text-align: center; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Нажмите для просмотра деталей</div>
+                    <div style="font-size: 11px; color: #9C9CA8; margin-top: 8px; text-align: center; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Нажмите для просмотра деталей</div>
                 </div>
             `;
         }).join('');
@@ -1719,19 +1910,19 @@
 
     function renderAmoCRMPromosList() {
         if (amoCRMPromoCodes.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
+            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
         }
 
         return amoCRMPromoCodes.map(promo => {
             return `
-                <div class="amocrm-promo-card" style="background: white; border: 2px solid #FFD4E5; border-radius: 8px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;" 
-                     onmouseover="this.style.borderColor='#FF9EC4'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'" 
-                     onmouseout="this.style.borderColor='#FFD4E5'; this.style.boxShadow='none'">
+                <div class="amocrm-promo-card" style="background: white; border: 1px solid #E7E7EC; border-radius: 10px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;" 
+                     onmouseover="this.style.borderColor='#E6407A'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'" 
+                     onmouseout="this.style.borderColor='#FDEFF4'; this.style.boxShadow='none'">
                     <button class="delete-amocrm-promo-btn" data-promo-code="${promo.value}" data-promo-id="${promo.id}" style="
                         position: absolute;
                         top: 10px;
                         right: 10px;
-                        background: #ff4444;
+                        background: #D64545;
                         color: white;
                         border: none;
                         border-radius: 50%;
@@ -1743,14 +1934,14 @@
                         align-items: center;
                         justify-content: center;
                         transition: all 0.2s;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        font-weight: bold;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+                        font-weight: 600;
                         line-height: 1;
                         padding: 0;
-                    " onmouseover="this.style.background='#cc0000'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#ff4444'; this.style.transform='scale(1)'">×</button>
+                    " onmouseover="this.style.background='#B23B3B'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#D64545'; this.style.transform='scale(1)'">×</button>
                     <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 30px;">
-                        <div style="font-size: 16px; font-weight: bold; color: #FF9EC4; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${promo.value}</div>
-                        <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">ID: ${promo.id}</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${promo.value}</div>
+                        <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">ID: ${promo.id}</div>
                     </div>
                 </div>
             `;
@@ -1830,8 +2021,8 @@
         const friendsPromoCode = await GM.getValue('friendsPromoCode', '');
         if (promoCodeDisplay) {
             promoCodeDisplay.innerHTML = friendsPromoCode
-                ? `Промокод: <strong style="color: #FF69B4; font-size: 16px;">${friendsPromoCode}</strong> (15%)`
-                : `<span style="color: #999;">Промокод не настроен. Настройте в разделе "Настройки"</span>`;
+                ? `Промокод: <strong style="color: #E6407A; font-size: 16px;">${friendsPromoCode}</strong> (15%)`
+                : `<span style="color: #9C9CA8;">Промокод не настроен. Настройте в разделе "Настройки"</span>`;
         }
 
         // Обработчик кнопки обновления
@@ -1844,8 +2035,8 @@
 
             if (stats.total === 0) {
                 statsContent.innerHTML = `
-                    <div style="text-align: center; padding: 30px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                        <div style="font-size: 32px; margin-bottom: 10px;">📭</div>
+                    <div style="text-align: center; padding: 30px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                        <div style="font-size: 32px; margin-bottom: 10px;"></div>
                         <div>Пока нет использований промокода друзей</div>
                     </div>
                 `;
@@ -1856,12 +2047,12 @@
             const employees = Object.entries(stats.byEmployee).sort((a, b) => b[1].count - a[1].count);
 
             let tableHTML = `
-                <table style="width: 100%; border-collapse: collapse; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                <table style="width: 100%; border-collapse: collapse; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     <thead>
                         <tr style="background: rgba(255, 105, 180, 0.1);">
-                            <th style="text-align: left; padding: 12px; border-bottom: 2px solid #FFB8D1; color: #FF69B4; font-size: 14px;">Сотрудник</th>
-                            <th style="text-align: center; padding: 12px; border-bottom: 2px solid #FFB8D1; color: #FF69B4; font-size: 14px;">Клиентов</th>
-                            <th style="text-align: left; padding: 12px; border-bottom: 2px solid #FFB8D1; color: #FF69B4; font-size: 14px;">Сделки</th>
+                            <th style="text-align: left; padding: 12px; border-bottom: 2px solid #E6407A; color: #E6407A; font-size: 14px;">Сотрудник</th>
+                            <th style="text-align: center; padding: 12px; border-bottom: 2px solid #E6407A; color: #E6407A; font-size: 14px;">Клиентов</th>
+                            <th style="text-align: left; padding: 12px; border-bottom: 2px solid #E6407A; color: #E6407A; font-size: 14px;">Сделки</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1870,18 +2061,18 @@
             employees.forEach(([employee, data], index) => {
                 const leadsLinks = data.leads.map((url, i) => {
                     if (url) {
-                        return `<a href="${url}" target="_blank" style="display: inline-block; margin: 2px; padding: 3px 8px; background: #FF69B4; color: white; text-decoration: none; border-radius: 4px; font-size: 11px;" title="${url}">🔗 ${i + 1}</a>`;
+                        return `<a href="${url}"target="_blank"style="display: inline-block; margin: 2px; padding: 3px 8px; background: #E6407A; color: white; text-decoration: none; border-radius: 4px; font-size: 11px;"title="${url}">${i + 1}</a>`;
                     }
                     return '';
                 }).filter(l => l).join('');
 
                 tableHTML += `
                     <tr style="background: ${index % 2 === 0 ? 'white' : 'rgba(255, 240, 245, 0.5)'};">
-                        <td style="padding: 12px; border-bottom: 1px solid #FFE4EC; font-weight: 600; color: #333;">${employee}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #FFE4EC; text-align: center;">
-                            <span style="display: inline-block; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color: white; padding: 4px 12px; border-radius: 12px; font-weight: bold;">${data.count}</span>
+                        <td style="padding: 12px; border-bottom: 1px solid #FDEFF4; font-weight: 600; color: #16161A;">${employee}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #FDEFF4; text-align: center;">
+                            <span style="display: inline-block; background: #E6407A; color: white; padding: 4px 12px; border-radius: 12px; font-weight: 600;">${data.count}</span>
                         </td>
-                        <td style="padding: 12px; border-bottom: 1px solid #FFE4EC;">${leadsLinks || '<span style="color: #999;">—</span>'}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #FDEFF4;">${leadsLinks || '<span style="color: #9C9CA8;">—</span>'}</td>
                     </tr>
                 `;
             });
@@ -1889,9 +2080,9 @@
             tableHTML += `
                     </tbody>
                 </table>
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #FFB8D1; text-align: center; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <span style="font-size: 14px; color: #666;">Всего клиентов: </span>
-                    <span style="font-size: 20px; font-weight: bold; color: #FF69B4;">${stats.total}</span>
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #E6407A; text-align: center; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <span style="font-size: 14px; color: #6E6E7A;">Всего клиентов: </span>
+                    <span style="font-size: 20px; font-weight: 600; color: #E6407A;">${stats.total}</span>
                 </div>
             `;
 
@@ -1900,8 +2091,8 @@
         } catch (error) {
             console.error('[Промокоды] Ошибка загрузки статистики друзей:', error);
             statsContent.innerHTML = `
-                <div style="text-align: center; padding: 30px; color: #ff4444; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <div style="font-size: 32px; margin-bottom: 10px;">❌</div>
+                <div style="text-align: center; padding: 30px; color: #D64545; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <div style="font-size: 32px; margin-bottom: 10px;"></div>
                     <div>Ошибка загрузки статистики</div>
                 </div>
             `;
@@ -1990,146 +2181,142 @@
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">URL Google Apps Script Web App:</label>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">URL Google Apps Script Web App:</label>
                     <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..." 
-                        style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <div style="font-size: 12px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
+                        style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
                 </div>
                 
                 <button id="save-webapp-url-btn" style="
                     width: 100%;
                     padding: 12px;
-                    background: #4CAF50;
+                    background: #E6407A;
                     color: white;
                     border: none;
-                    border-radius: 6px;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 20px;
                 ">Сохранить URL</button>
                 
-                <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
+                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
                 
                 <button id="sync-google-sheet-btn" style="
                     width: 100%;
                     padding: 12px;
-                    background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
+                    background: #FFFFFF;
+                    color: #16161A;
+                    border: 1px solid #E7E7EC;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 15px;
-                    box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из Google Таблицы</button>
                 
                 <button id="sync-amocrm-btn" style="
                     width: 100%;
                     padding: 12px;
-                    background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
+                    background: #FFFFFF;
+                    color: #16161A;
+                    border: 1px solid #E7E7EC;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 15px;
-                    box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 ">Загрузить промокоды из amoCRM</button>
                 
                 <button id="sync-amocrm-to-google-btn" style="
                     width: 100%;
                     padding: 12px;
-                    background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
+                    background: #FFFFFF;
+                    color: #16161A;
+                    border: 1px solid #E7E7EC;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 15px;
-                    box-shadow: 0 4px 15px rgba(156, 39, 176, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">↔ Синхронизировать amoCRM → Google Таблица</button>
+                ">Выгрузить: amoCRM → Google Таблица</button>
 
                 <button id="sync-google-to-amocrm-btn" style="
                     width: 100%;
                     padding: 12px;
-                    background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
+                    background: #FFFFFF;
+                    color: #16161A;
+                    border: 1px solid #E7E7EC;
+                    border-radius: 10px;
                     cursor: pointer;
                     font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                    font-weight: 600;
+                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                     margin-bottom: 20px;
-                    box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);
                     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">↔ Синхронизировать Google Таблица → amoCRM</button>
+                ">Загрузить: Google Таблица → amoCRM</button>
 
-                <div style="background: #f5f5f5; padding: 20px; border-radius: 8px;">
-                    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Статистика</h3>
+                <div style="background: #F7F7F9; padding: 20px; border-radius: 10px;">
+                    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Статистика</h3>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div>
-                            <div style="font-size: 12px; color: #999; margin-bottom: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокодов в Google:</div>
-                            <div style="font-size: 24px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="google-promo-count">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокодов в Google:</div>
+                            <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="google-promo-count">0</div>
                         </div>
                         <div>
-                            <div style="font-size: 12px; color: #999; margin-bottom: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Промокодов в amoCRM:</div>
-                            <div style="font-size: 24px; font-weight: bold; color: #FFB8D1; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="amocrm-promo-count">0</div>
+                            <div style="font-size: 12px; color: #9C9CA8; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокодов в amoCRM:</div>
+                            <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="amocrm-promo-count">0</div>
                         </div>
                     </div>
-                    <div style="margin-top: 15px; font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
+                    <div style="margin-top: 15px; font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
                 </div>
                 
-                <hr style="border: none; border-top: 2px solid #e0e0e0; margin: 30px 0;">
+                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
                 
-                <div style="background: ${isAdminAuthorized ? '#d4edda' : '#fff3e0'}; padding: 20px; border-radius: 8px; border-left: 4px solid ${isAdminAuthorized ? '#4CAF50' : '#FF9800'};">
-                    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: ${isAdminAuthorized ? '#155724' : '#E65100'}; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                        ${isAdminAuthorized ? '✅ Режим администратора' : '🔒 Защита данных'}
+                <div style="background: ${isAdminAuthorized ? '#E6F4EC' : '#FCF4E8'}; padding: 20px; border-radius: 10px; border-left: 4px solid ${isAdminAuthorized ? '#2E9E63' : '#C77A18'};">
+                    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: ${isAdminAuthorized ? '#1E6B44' : '#A85F0F'}; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                        ${isAdminAuthorized ? 'Режим администратора': 'Защита данных'}
                     </h3>
-                    <p style="margin: 0 0 15px 0; font-size: 13px; color: ${isAdminAuthorized ? '#155724' : '#E65100'}; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <p style="margin: 0 0 15px 0; font-size: 13px; color: ${isAdminAuthorized ? '#1E6B44' : '#A85F0F'}; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         ${isAdminAuthorized ? 'Вы авторизованы. Разрешено добавлять и удалять промокоды.' : 'Для добавления и удаления промокодов требуется код администратора.'}
                     </p>
                     ${isAdminAuthorized ? `
                         <button id="admin-logout-btn" style="
                             width: 100%;
                             padding: 12px;
-                            background: linear-gradient(135deg, #FF5252 0%, #E53935 100%);
+                            background: #D64545;
                             color: white;
                             border: none;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);
                             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                        ">🚪 Выйти из режима администратора</button>
+                        ">Выйти из режима администратора</button>
                     ` : `
                         <button id="admin-auth-btn" style="
                             width: 100%;
                             padding: 12px;
-                            background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+                            background: #C77A18;
                             color: white;
                             border: none;
-                            border-radius: 8px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
                             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                        ">🔑 Ввести код администратора</button>
+                        ">Ввести код администратора</button>
                     `}
                 </div>
 
@@ -2141,23 +2328,15 @@
         const syncGoogleBtn = document.getElementById('sync-google-sheet-btn');
         syncGoogleBtn.onclick = () => syncWithGoogleSheet(false);
         syncGoogleBtn.onmouseover = () => {
-            syncGoogleBtn.style.transform = 'translateY(-2px)';
-            syncGoogleBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
         };
         syncGoogleBtn.onmouseout = () => {
-            syncGoogleBtn.style.transform = 'translateY(0)';
-            syncGoogleBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
         
         const syncAmoCRMBtn = document.getElementById('sync-amocrm-btn');
         syncAmoCRMBtn.onclick = () => syncWithAmoCRM(false);
         syncAmoCRMBtn.onmouseover = () => {
-            syncAmoCRMBtn.style.transform = 'translateY(-2px)';
-            syncAmoCRMBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
         };
         syncAmoCRMBtn.onmouseout = () => {
-            syncAmoCRMBtn.style.transform = 'translateY(0)';
-            syncAmoCRMBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
         };
 
         const syncAmoCRMToGoogleBtn = document.getElementById('sync-amocrm-to-google-btn');
@@ -2173,14 +2352,12 @@
             await syncAmoCRMToGoogleSheets();
         };
         syncAmoCRMToGoogleBtn.onmouseover = () => {
-            syncAmoCRMToGoogleBtn.style.transform = 'translateY(-2px)';
             syncAmoCRMToGoogleBtn.style.boxShadow = '0 8px 25px rgba(156, 39, 176, 0.5)';
-            syncAmoCRMToGoogleBtn.style.background = 'linear-gradient(135deg, #AB47BC 0%, #9C27B0 100%)';
+            syncAmoCRMToGoogleBtn.style.background = '#AB47BC';
         };
         syncAmoCRMToGoogleBtn.onmouseout = () => {
-            syncAmoCRMToGoogleBtn.style.transform = 'translateY(0)';
             syncAmoCRMToGoogleBtn.style.boxShadow = '0 4px 15px rgba(156, 39, 176, 0.3)';
-            syncAmoCRMToGoogleBtn.style.background = 'linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%)';
+            syncAmoCRMToGoogleBtn.style.background = '#7B57C4';
         };
 
         const syncGoogleToAmoCRMBtn = document.getElementById('sync-google-to-amocrm-btn');
@@ -2192,14 +2369,12 @@
             await syncGoogleToAmoCRM();
         };
         syncGoogleToAmoCRMBtn.onmouseover = () => {
-            syncGoogleToAmoCRMBtn.style.transform = 'translateY(-2px)';
             syncGoogleToAmoCRMBtn.style.boxShadow = '0 8px 25px rgba(33, 150, 243, 0.5)';
-            syncGoogleToAmoCRMBtn.style.background = 'linear-gradient(135deg, #42A5F5 0%, #2196F3 100%)';
+            syncGoogleToAmoCRMBtn.style.background = '#42A5F5';
         };
         syncGoogleToAmoCRMBtn.onmouseout = () => {
-            syncGoogleToAmoCRMBtn.style.transform = 'translateY(0)';
             syncGoogleToAmoCRMBtn.style.boxShadow = '0 4px 15px rgba(33, 150, 243, 0.3)';
-            syncGoogleToAmoCRMBtn.style.background = 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)';
+            syncGoogleToAmoCRMBtn.style.background = '#3B7BD6';
         };
 
         if (isAdminAuthorized) {
@@ -2214,14 +2389,12 @@
                     }
                 };
                 adminLogoutBtn.onmouseover = () => {
-                    adminLogoutBtn.style.transform = 'translateY(-2px)';
                     adminLogoutBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
-                    adminLogoutBtn.style.background = 'linear-gradient(135deg, #FF6B6B 0%, #FF5252 100%)';
+                    adminLogoutBtn.style.background = '#D64545';
                 };
                 adminLogoutBtn.onmouseout = () => {
-                    adminLogoutBtn.style.transform = 'translateY(0)';
                     adminLogoutBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
-                    adminLogoutBtn.style.background = 'linear-gradient(135deg, #FF5252 0%, #E53935 100%)';
+                    adminLogoutBtn.style.background = '#D64545';
                 };
             }
         } else {
@@ -2231,14 +2404,12 @@
                     showAdminPasswordModal();
                 };
                 adminAuthBtn.onmouseover = () => {
-                    adminAuthBtn.style.transform = 'translateY(-2px)';
                     adminAuthBtn.style.boxShadow = '0 8px 25px rgba(255, 152, 0, 0.5)';
-                    adminAuthBtn.style.background = 'linear-gradient(135deg, #FFA726 0%, #FF9800 100%)';
+                    adminAuthBtn.style.background = '#FFA726';
                 };
                 adminAuthBtn.onmouseout = () => {
-                    adminAuthBtn.style.transform = 'translateY(0)';
                     adminAuthBtn.style.boxShadow = '0 4px 15px rgba(255, 152, 0, 0.3)';
-                    adminAuthBtn.style.background = 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)';
+                    adminAuthBtn.style.background = '#C77A18';
                 };
             }
         }
@@ -2247,63 +2418,40 @@
     }
 
     function showAdminPasswordModal() {
+        injectStyles();
+
         const overlay = document.createElement('div');
+        overlay.className = 'pcx';
         overlay.style.cssText = `
             display: flex;
             align-items: center;
             justify-content: center;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
+            inset: 0;
+            background: rgba(18, 18, 26, 0.45);
             z-index: 10001;
-            backdrop-filter: blur(5px);
+            backdrop-filter: blur(3px);
         `;
 
         const modal = document.createElement('div');
         modal.style.cssText = `
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            max-width: 400px;
-            width: 90%;
+            width: min(380px, 92vw);
+            padding: 26px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 30px 80px rgba(16, 16, 28, 0.3);
         `;
 
         modal.innerHTML = `
-            <h3 style="margin: 0 0 20px 0; font-size: 20px; color: #333; text-align: center; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                🔐 Код администратора
-            </h3>
-            <input type="password" id="admin-password-input" placeholder="Введите код" 
-                style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 16px; box-sizing: border-box; margin-bottom: 20px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; text-align: center; letter-spacing: 3px;">
+            <h3 style="margin: 0 0 6px; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: #16161A;">Код администратора</h3>
+            <p style="margin: 0 0 18px; font-size: 13px; font-weight: 500; color: #9C9CA8;">Нужен для добавления промокодов и аналитики</p>
+            <input type="password" id="admin-password-input" placeholder="Введите код"
+                style="width: 100%; height: 42px; padding: 0 14px; border: 1px solid #E7E7EC; border-radius: 10px;
+                       font-size: 15px; font-weight: 600; letter-spacing: 3px; text-align: center;
+                       color: #16161A; outline: none; margin-bottom: 16px;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                <button id="cancel-password-btn" style="
-                    padding: 12px;
-                    background: #f5f5f5;
-                    color: #666;
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                    transition: all 0.2s;
-                ">Отмена</button>
-                <button id="submit-password-btn" style="
-                    padding: 12px;
-                    background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: bold;
-                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                    box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
-                    transition: all 0.2s;
-                ">Войти</button>
+                <button id="cancel-password-btn" class="pcx-btn pcx-btn--ghost">Отмена</button>
+                <button id="submit-password-btn" class="pcx-btn pcx-btn--primary">Войти</button>
             </div>
         `;
 
@@ -2322,14 +2470,14 @@
                 isAdminAuthorized = true;
                 localStorage.setItem('promo_admin_authorized', 'true');
                 overlay.remove();
-                showNotification('✅ Авторизация успешна! Разрешено добавлять и удалять промокоды', 'success');
+                showNotification('Авторизация успешна! Разрешено добавлять и удалять промокоды', 'success');
                 switchTab('settings');
             } else {
                 passwordInput.value = '';
-                passwordInput.style.borderColor = '#f44336';
-                showNotification('❌ Неверный код администратора', 'error');
+                passwordInput.style.borderColor = '#D64545';
+                showNotification('Неверный код администратора', 'error');
                 setTimeout(() => {
-                    passwordInput.style.borderColor = '#ddd';
+                    passwordInput.style.borderColor = '#E7E7EC';
                 }, 2000);
             }
         };
@@ -2375,40 +2523,40 @@
                     : `${promo.discount} ₽`;
                 
                 let detailsHtml = `
-                    <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; color: #FFB8D1;">Промокод активен!</div>
-                    <div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Скидка:</strong> ${discountText}</div>
-                    <div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Тип:</strong> ${promo.type}</div>
+                    <div style="font-size: 16px; font-weight: 600; margin-bottom: 15px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: #E6407A;">Промокод активен!</div>
+                    <div style="margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"><strong>Скидка:</strong> ${discountText}</div>
+                    <div style="margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"><strong>Тип:</strong> ${promo.type}</div>
                 `;
 
                 if (promo.minOrderAmount) {
-                    detailsHtml += `<div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Минимальная сумма заказа:</strong> ${promo.minOrderAmount} ₽</div>`;
+                    detailsHtml += `<div style="margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"><strong>Минимальная сумма заказа:</strong> ${promo.minOrderAmount} ₽</div>`;
                 }
 
                 if (promo.expiryDate) {
-                    detailsHtml += `<div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Срок действия:</strong> до ${formatDate(promo.expiryDate)}</div>`;
+                    detailsHtml += `<div style="margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"><strong>Срок действия:</strong> до ${formatDate(promo.expiryDate)}</div>`;
                 }
 
                 if (promo.maxUsages) {
                     const remaining = promo.maxUsages - (promo.currentUsages || 0);
-                    detailsHtml += `<div style="margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;"><strong>Осталось использований:</strong> ${remaining} из ${promo.maxUsages}</div>`;
+                    detailsHtml += `<div style="margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"><strong>Осталось использований:</strong> ${remaining} из ${promo.maxUsages}</div>`;
                 }
 
                 if (promo.description) {
-                    detailsHtml += `<div style="margin-top: 15px; padding: 10px; background: #f9f9f9; border-radius: 4px; font-size: 13px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">${promo.description}</div>`;
+                    detailsHtml += `<div style="margin-top: 15px; padding: 10px; background: #FAFAFB; border-radius: 4px; font-size: 13px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${promo.description}</div>`;
                 }
 
                 detailsHtml += `
                     <button id="apply-promo-btn" style="
                         width: 100%;
                         padding: 12px;
-                        background: #4CAF50;
+                        background: #2E9E63;
                         color: white;
                         border: none;
-                        border-radius: 6px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 14px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         margin-top: 15px;
                     ">Применить промокод</button>
                 `;
@@ -2564,7 +2712,7 @@
         const resultDiv = document.getElementById('add-promo-result');
 
         if (!isAdminAuthorized) {
-            showResult(resultDiv, '🔒 Для добавления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
+            showResult(resultDiv, 'Для добавления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
 
@@ -3015,7 +3163,7 @@
     // (PROMO_FIELD_ID). Ничего не пишем в Google Sheets, только читаем API amoCRM.
 
     // Единый шрифт интерфейса (как в остальном скрипте)
-    const AN_FONT = `'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif`;
+    const AN_FONT = `Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif`;
     // Системные статусы amoCRM: 142 - успешно реализовано, 143 - закрыто и не реализовано
     const AMO_STATUS_WON = 142;
     const AMO_STATUS_LOST = 143;
@@ -3256,18 +3404,18 @@
 
         const mkPeriodBtn = (key, label, active) => `
             <button class="promo-an-period-btn${active ? ' active' : ''}" data-period="${key}" style="
-                padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; font-family: ${AN_FONT}; transition: all 0.2s;
-                background: ${active ? 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)' : '#fff'};
-                color: ${active ? 'white' : '#666'};">${label}</button>`;
+                padding: 10px; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: ${AN_FONT}; transition: all 0.2s;
+                background: ${active ? '#E6407A' : '#fff'};
+                color: ${active ? 'white' : '#6E6E7A'};">${label}</button>`;
 
         return `
-            <hr style="border: none; border-top: 2px solid #FFB8D1; margin: 30px 0;">
-            <div id="promo-analytics-section" style="background: linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius: 12px; padding: 20px; border: 2px solid #FFB8D1;">
-                <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #FF69B4; font-family: ${AN_FONT}; display: flex; align-items: center; gap: 10px;">
-                    📊 Аналитика применения промокодов
-                    <button id="refresh-promo-analytics-btn" style="padding: 5px 12px; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">🔄 Обновить</button>
+            <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
+            <div id="promo-analytics-section" style="background: #FDEFF4; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
+                <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #E6407A; font-family: ${AN_FONT}; display: flex; align-items: center; gap: 10px;">
+                     Аналитика применения промокодов
+                    <button id="refresh-promo-analytics-btn"style="padding: 5px 12px; background: #E6407A; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">Обновить</button>
                 </h3>
-                <div style="font-size: 13px; color: #666; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM.</div>
+                <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM.</div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
                     ${mkPeriodBtn('today', 'Сегодня', false)}
                     ${mkPeriodBtn('week', 'Неделя', false)}
@@ -3276,16 +3424,16 @@
                 </div>
                 <div id="promo-an-custom-block" style="display: none; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
                     <div>
-                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#666; font-family:${AN_FONT};">Начало:</label>
-                        <input type="date" id="promo-an-start" value="${monthAgoStr}" style="width:100%; padding:10px; border:2px solid #FFD4E5; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
+                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#6E6E7A; font-family:${AN_FONT};">Начало:</label>
+                        <input type="date" id="promo-an-start" value="${monthAgoStr}" style="width:100%; padding:10px; border:2px solid #FDEFF4; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
                     </div>
                     <div>
-                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#666; font-family:${AN_FONT};">Конец:</label>
-                        <input type="date" id="promo-an-end" value="${todayStr}" style="width:100%; padding:10px; border:2px solid #FFD4E5; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
+                        <label style="display:block; margin-bottom:5px; font-size:12px; color:#6E6E7A; font-family:${AN_FONT};">Конец:</label>
+                        <input type="date" id="promo-an-end" value="${todayStr}" style="width:100%; padding:10px; border:2px solid #FDEFF4; border-radius:6px; font-size:13px; box-sizing:border-box; font-family:${AN_FONT};">
                     </div>
                 </div>
-                <button id="load-promo-analytics-btn" style="width:100%; padding:12px; background: linear-gradient(135deg, #FF69B4 0%, #FF1493 100%); color:white; border:none; border-radius:8px; cursor:pointer; font-size:15px; font-weight:bold; font-family:${AN_FONT};">Загрузить аналитику</button>
-                <div id="promo-analytics-progress" style="margin-top:12px; font-size:13px; color:#FF69B4; font-family:${AN_FONT}; text-align:center;"></div>
+                <button id="load-promo-analytics-btn" style="width:100%; padding:12px; background: #E6407A; color:white; border:none; border-radius:8px; cursor:pointer; font-size:15px; font-weight:bold; font-family:${AN_FONT};">Загрузить аналитику</button>
+                <div id="promo-analytics-progress" style="margin-top:12px; font-size:13px; color:#E6407A; font-family:${AN_FONT}; text-align:center;"></div>
                 <div id="promo-analytics-summary" style="margin-top:15px;"></div>
                 <div id="promo-analytics-details" style="margin-top:15px;"></div>
                 <div id="promo-florist-summary" style="margin-top:20px;"></div>
@@ -3299,8 +3447,8 @@
         buttons.forEach(b => {
             const on = b.dataset.period === key;
             b.classList.toggle('active', on);
-            b.style.background = on ? 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)' : '#fff';
-            b.style.color = on ? 'white' : '#666';
+            b.style.background = on ? '#E6407A' : '#fff';
+            b.style.color = on ? 'white' : '#6E6E7A';
         });
         const customBlock = document.getElementById('promo-an-custom-block');
         if (customBlock) customBlock.style.display = (key === 'custom') ? 'grid' : 'none';
@@ -3317,10 +3465,10 @@
                 periodButtons.forEach(b => {
                     b.classList.remove('active');
                     b.style.background = '#fff';
-                    b.style.color = '#666';
+                    b.style.color = '#6E6E7A';
                 });
                 btn.classList.add('active');
-                btn.style.background = 'linear-gradient(135deg, #FF69B4 0%, #FF1493 100%)';
+                btn.style.background = '#E6407A';
                 btn.style.color = 'white';
                 const customBlock = document.getElementById('promo-an-custom-block');
                 if (customBlock) customBlock.style.display = (btn.dataset.period === 'custom') ? 'grid' : 'none';
@@ -3341,8 +3489,8 @@
         const el = document.getElementById('promo-analytics-progress');
         if (!el) return;
         if (!total && !label) { el.textContent = ''; return; }
-        if (total) el.textContent = `⏳ ${label || 'Загрузка'}: ${done} из ${total}...`;
-        else el.textContent = `⏳ ${label || 'Загрузка'}...`;
+        if (total) el.textContent = `${label || 'Загрузка'}: ${done} из ${total}...`;
+        else el.textContent = `${label || 'Загрузка'}...`;
     }
 
     // Главная точка входа блока: грузит из кэша или запрашивает заново
@@ -3372,12 +3520,12 @@
                 updateAnalyticsProgress(0, 0);
                 return;
             }
-            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#999; font-family:${AN_FONT}; font-size:14px;">Нажмите «Загрузить аналитику» для просмотра статистики по промокодам</div>`;
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#9C9CA8; font-family:${AN_FONT}; font-size:14px;">Нажмите «Загрузить аналитику» для просмотра статистики по промокодам</div>`;
             return;
         }
 
         if (!amoCRMPromoCodes || amoCRMPromoCodes.length === 0) {
-            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#E65100; font-family:${AN_FONT}; font-size:14px;">Промокоды из amoCRM не загружены. Откройте «Настройки» и синхронизируйте промокоды.</div>`;
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#A85F0F; font-family:${AN_FONT}; font-size:14px;">Промокоды из amoCRM не загружены. Откройте «Настройки» и синхронизируйте промокоды.</div>`;
             return;
         }
 
@@ -3392,7 +3540,7 @@
         } catch (e) {
             console.error('[Аналитика промокодов] Ошибка:', e);
             updateAnalyticsProgress(0, 0);
-            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#c62828; font-family:${AN_FONT}; font-size:14px;">Ошибка загрузки: ${e.message}</div>`;
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#B23B3B; font-family:${AN_FONT}; font-size:14px;">Ошибка загрузки: ${e.message}</div>`;
             showNotification('Ошибка загрузки аналитики промокодов', 'error');
         }
     }
@@ -3417,7 +3565,7 @@
         const totalBudget = rows.reduce((s, c) => s + c.metrics.sumBudget, 0);
 
         if (rows.length === 0) {
-            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#999; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодами не найдено</div>`;
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#9C9CA8; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодами не найдено</div>`;
             return;
         }
 
@@ -3425,41 +3573,41 @@
             const m = c.metrics;
             const parsed = parseAmoCRMPromoCode(c.code);
             return `
-                <tr class="promo-an-row" data-enum-id="${c.enumId}" style="cursor:pointer; border-bottom:1px solid #FFD4E5; transition:background 0.15s;" onmouseover="this.style.background='#FFF0F5'" onmouseout="this.style.background='transparent'">
-                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:#333; font-weight:600;">${parsed.code}${parsed.description ? ` <span style="color:#999; font-weight:400;">(${parsed.description})</span>` : ''}</td>
-                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#FF1493; font-weight:bold;">${m.count}</td>
-                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#333;">${m.sumBudget.toLocaleString('ru-RU')} ₽</td>
-                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:13px; color:#2e7d32;">${m.conversion.toFixed(1)}% <span style="color:#999; font-size:11px;">(${m.won}/${m.count})</span></td>
+                <tr class="promo-an-row" data-enum-id="${c.enumId}" style="cursor:pointer; border-bottom:1px solid #FDEFF4; transition:background 0.15s;" onmouseover="this.style.background='#FDEFF4'" onmouseout="this.style.background='transparent'">
+                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:#16161A; font-weight:600;">${parsed.code}${parsed.description ? ` <span style="color:#9C9CA8; font-weight:400;">(${parsed.description})</span>` : ''}</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#CF356B; font-weight:bold;">${m.count}</td>
+                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#16161A;">${m.sumBudget.toLocaleString('ru-RU')} ₽</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:13px; color:#237A4C;">${m.conversion.toFixed(1)}% <span style="color:#9C9CA8; font-size:11px;">(${m.won}/${m.count})</span></td>
                 </tr>`;
         }).join('');
 
         summaryEl.innerHTML = `
-            <div style="background:white; border-radius:10px; padding:12px; border:2px solid #FFD4E5;">
-                <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#666;">
-                    <span>Воронка: <strong style="color:#FF69B4;">${analytics.pipelineName || '-'}</strong></span>
-                    <span>Промокодов с применением: <strong style="color:#FF69B4;">${rows.length}</strong></span>
-                    <span>Всего применений: <strong style="color:#FF69B4;">${totalApplies}</strong></span>
-                    <span>Сумма бюджетов: <strong style="color:#FF69B4;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
+            <div style="background:white; border-radius:10px; padding:12px; border:2px solid #FDEFF4;">
+                <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#6E6E7A;">
+                    <span>Воронка: <strong style="color:#E6407A;">${analytics.pipelineName || '-'}</strong></span>
+                    <span>Промокодов с применением: <strong style="color:#E6407A;">${rows.length}</strong></span>
+                    <span>Всего применений: <strong style="color:#E6407A;">${totalApplies}</strong></span>
+                    <span>Сумма бюджетов: <strong style="color:#E6407A;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
                 </div>
                 <table style="width:100%; border-collapse:collapse;">
                     <thead>
-                        <tr style="border-bottom:2px solid #FFB8D1;">
-                            <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Промокод</th>
-                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Применений</th>
-                            <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Сумма бюджетов</th>
-                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#FF69B4;">Конверсия</th>
+                        <tr style="border-bottom:2px solid #E6407A;">
+                            <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#E6407A;">Промокод</th>
+                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#E6407A;">Применений</th>
+                            <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#E6407A;">Сумма бюджетов</th>
+                            <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#E6407A;">Конверсия</th>
                         </tr>
                     </thead>
                     <tbody>${rowsHtml}</tbody>
                 </table>
                 ${zeroCount > 0 ? `
                 <div style="margin-top:10px;">
-                    <button id="promo-an-zero-toggle" style="background:none; border:none; cursor:pointer; padding:0; font-family:${AN_FONT}; font-size:12px; color:#FF69B4; text-decoration:underline;">Промокодов без применений за период: ${zeroCount} — показать</button>
-                    <div id="promo-an-zero-list" style="display:none; margin-top:8px; padding:10px; background:#FFF7FA; border:1px dashed #FFB8D1; border-radius:8px;">
-                        ${zeroCodes.map(p => `<span style="display:inline-block; margin:3px 5px 3px 0; padding:3px 8px; background:#fff; border:1px solid #FFD4E5; border-radius:12px; font-size:12px; font-family:${AN_FONT}; color:#666;">${p.code}${p.description ? ` <span style="color:#bbb;">(${p.description})</span>` : ''}</span>`).join('')}
+                    <button id="promo-an-zero-toggle" style="background:none; border:none; cursor:pointer; padding:0; font-family:${AN_FONT}; font-size:12px; color:#E6407A; text-decoration:underline;">Промокодов без применений за период: ${zeroCount} — показать</button>
+                    <div id="promo-an-zero-list" style="display:none; margin-top:8px; padding:10px; background:#FFF7FA; border:1px dashed #E6407A; border-radius:8px;">
+                        ${zeroCodes.map(p => `<span style="display:inline-block; margin:3px 5px 3px 0; padding:3px 8px; background:#fff; border:1px solid #FDEFF4; border-radius:12px; font-size:12px; font-family:${AN_FONT}; color:#6E6E7A;">${p.code}${p.description ? ` <span style="color:#C6C6D0;">(${p.description})</span>` : ''}</span>`).join('')}
                     </div>
                 </div>` : ''}
-                <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки конкретного промокода</div>
+                <div style="margin-top:8px; font-size:11px; color:#C6C6D0; font-family:${AN_FONT};">Нажмите на строку, чтобы увидеть сделки конкретного промокода</div>
             </div>`;
 
         summaryEl.querySelectorAll('.promo-an-row').forEach(row => {
@@ -3493,7 +3641,7 @@
         const leads = (entry.leads || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
 
         if (leads.length === 0) {
-            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#999; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
+            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#9C9CA8; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
             return;
         }
 
@@ -3502,26 +3650,26 @@
             const stage = statusMap[l.status_id] || ('Этап ' + l.status_id);
             const isWon = l.status_id === AMO_STATUS_WON;
             const isLost = l.status_id === AMO_STATUS_LOST;
-            const stageColor = isWon ? '#2e7d32' : isLost ? '#c62828' : '#FF9800';
+            const stageColor = isWon ? '#237A4C' : isLost ? '#B23B3B' : '#C77A18';
             const dateStr = l.created_at ? formatDate(l.created_at * 1000) : '';
             return `
                 <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
                         <div style="flex:1;">
-                            <div style="font-size:14px; font-family:${AN_FONT};">💼 <a href="${url}" target="_blank" style="color:#FF69B4; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
-                            <div style="font-size:12px; color:#666; font-family:${AN_FONT}; margin-top:4px;">📊 ${stage} • 🗂 ${analytics.pipelineName || ''}</div>
-                            <div style="font-size:11px; color:#999; font-family:${AN_FONT}; margin-top:3px;">🗓 ${dateStr}</div>
+                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}"target="_blank"style="color:#E6407A; text-decoration:none; font-weight:600;"onmouseover="this.style.textDecoration='underline'"onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:12px; color:#6E6E7A; font-family:${AN_FONT}; margin-top:4px;">${stage} • ${analytics.pipelineName || ''}</div>
+                            <div style="font-size:11px; color:#9C9CA8; font-family:${AN_FONT}; margin-top:3px;">${dateStr}</div>
                         </div>
-                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#333; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
+                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#16161A; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
                     </div>
                 </div>`;
         }).join('');
 
         detailsEl.innerHTML = `
-            <div style="background:linear-gradient(135deg, #FFF0F5 0%, #FFE4EC 100%); border-radius:10px; padding:15px; border:2px solid #FFB8D1;">
+            <div style="background:#FDEFF4; border-radius:10px; padding:15px; border:2px solid #E6407A;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <h4 style="margin:0; font-size:15px; color:#FF69B4; font-family:${AN_FONT};">Сделки по промокоду «${parsed.code}» (${leads.length})</h4>
-                    <button id="promo-an-close-details" style="background:#FF69B4; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
+                    <h4 style="margin:0; font-size:15px; color:#E6407A; font-family:${AN_FONT};">Сделки по промокоду «${parsed.code}» (${leads.length})</h4>
+                    <button id="promo-an-close-details" style="background:#E6407A; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
                 </div>
                 <div style="max-height:400px; overflow-y:auto;">${items}</div>
             </div>`;
@@ -3546,13 +3694,13 @@
         });
 
         const wrap = (inner) => `
-            <div style="background:linear-gradient(135deg, #FFF5E6 0%, #FFECD1 100%); border-radius:12px; padding:20px; border:2px solid #FFCF8B;">
-                <h3 style="margin:0 0 12px 0; font-size:17px; color:#E67E22; font-family:${AN_FONT}; display:flex; align-items:center; gap:8px;">🌸 Замены по флористам</h3>
+            <div style="background:#FCF4E8; border-radius:12px; padding:20px; border:2px solid #F0D8B0;">
+                <h3 style="margin:0 0 12px 0; font-size:17px; color:#C77A18; font-family:${AN_FONT}; display:flex; align-items:center; gap:8px;">Замены по флористам</h3>
                 ${inner}
             </div>`;
 
         if (!entry || !entry.leads || entry.leads.length === 0) {
-            summaryEl.innerHTML = wrap(`<div style="text-align:center; padding:15px; color:#999; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодом «замена» не найдено</div>`);
+            summaryEl.innerHTML = wrap(`<div style="text-align:center; padding:15px; color:#9C9CA8; font-family:${AN_FONT}; font-size:14px;">За выбранный период сделок с промокодом «замена» не найдено</div>`);
             return;
         }
 
@@ -3575,29 +3723,29 @@
             const isUnknown = r.name === 'Не указан';
             return `
                 <tr class="promo-florist-row" data-florist="${encodeURIComponent(r.name)}" style="cursor:pointer; border-bottom:1px solid #FFE0B2; transition:background 0.15s;" onmouseover="this.style.background='#FFF7EC'" onmouseout="this.style.background='transparent'">
-                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:${isUnknown ? '#999' : '#333'}; font-weight:600;">${r.name}</td>
-                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#E67E22; font-weight:bold;">${r.metrics.count}</td>
-                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#333;">${r.metrics.sumBudget.toLocaleString('ru-RU')} ₽</td>
+                    <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:${isUnknown ? '#9C9CA8' : '#16161A'}; font-weight:600;">${r.name}</td>
+                    <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#C77A18; font-weight:bold;">${r.metrics.count}</td>
+                    <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#16161A;">${r.metrics.sumBudget.toLocaleString('ru-RU')} ₽</td>
                 </tr>`;
         }).join('');
 
         summaryEl.innerHTML = wrap(`
-            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#666;">
-                <span>Флористов с заменами: <strong style="color:#E67E22;">${rows.length}</strong></span>
-                <span>Всего замен: <strong style="color:#E67E22;">${totalReplacements}</strong></span>
-                <span>Сумма бюджетов: <strong style="color:#E67E22;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
+            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-family:${AN_FONT}; font-size:12px; color:#6E6E7A;">
+                <span>Флористов с заменами: <strong style="color:#C77A18;">${rows.length}</strong></span>
+                <span>Всего замен: <strong style="color:#C77A18;">${totalReplacements}</strong></span>
+                <span>Сумма бюджетов: <strong style="color:#C77A18;">${totalBudget.toLocaleString('ru-RU')} ₽</strong></span>
             </div>
             <table style="width:100%; border-collapse:collapse; background:#fff; border-radius:8px;">
                 <thead>
-                    <tr style="border-bottom:2px solid #FFCF8B;">
-                        <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Флорист</th>
-                        <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Замен</th>
-                        <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#E67E22;">Сумма бюджетов</th>
+                    <tr style="border-bottom:2px solid #F0D8B0;">
+                        <th style="padding:8px; text-align:left; font-family:${AN_FONT}; font-size:12px; color:#C77A18;">Флорист</th>
+                        <th style="padding:8px; text-align:center; font-family:${AN_FONT}; font-size:12px; color:#C77A18;">Замен</th>
+                        <th style="padding:8px; text-align:right; font-family:${AN_FONT}; font-size:12px; color:#C77A18;">Сумма бюджетов</th>
                     </tr>
                 </thead>
                 <tbody>${rowsHtml}</tbody>
             </table>
-            <div style="margin-top:8px; font-size:11px; color:#bbb; font-family:${AN_FONT};">Нажмите на флориста, чтобы увидеть сделки, по которым были замены</div>`);
+            <div style="margin-top:8px; font-size:11px; color:#C6C6D0; font-family:${AN_FONT};">Нажмите на флориста, чтобы увидеть сделки, по которым были замены</div>`);
 
         summaryEl.querySelectorAll('.promo-florist-row').forEach(row => {
             row.addEventListener('click', () => {
@@ -3617,7 +3765,7 @@
         const sorted = (leads || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
 
         if (sorted.length === 0) {
-            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#999; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
+            detailsEl.innerHTML = `<div style="text-align:center; padding:20px; color:#9C9CA8; font-family:${AN_FONT}; font-size:13px;">Сделок не найдено</div>`;
             return;
         }
 
@@ -3626,26 +3774,26 @@
             const stage = statusMap[l.status_id] || ('Этап ' + l.status_id);
             const isWon = l.status_id === AMO_STATUS_WON;
             const isLost = l.status_id === AMO_STATUS_LOST;
-            const stageColor = isWon ? '#2e7d32' : isLost ? '#c62828' : '#FF9800';
+            const stageColor = isWon ? '#237A4C' : isLost ? '#B23B3B' : '#C77A18';
             const dateStr = l.created_at ? formatDate(l.created_at * 1000) : '';
             return `
                 <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
                         <div style="flex:1;">
-                            <div style="font-size:14px; font-family:${AN_FONT};">💼 <a href="${url}" target="_blank" style="color:#E67E22; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
-                            <div style="font-size:12px; color:#666; font-family:${AN_FONT}; margin-top:4px;">📊 ${stage} • 🗂 ${analytics.pipelineName || ''}</div>
-                            <div style="font-size:11px; color:#999; font-family:${AN_FONT}; margin-top:3px;">🗓 ${dateStr}</div>
+                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}"target="_blank"style="color:#C77A18; text-decoration:none; font-weight:600;"onmouseover="this.style.textDecoration='underline'"onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:12px; color:#6E6E7A; font-family:${AN_FONT}; margin-top:4px;">${stage} • ${analytics.pipelineName || ''}</div>
+                            <div style="font-size:11px; color:#9C9CA8; font-family:${AN_FONT}; margin-top:3px;">${dateStr}</div>
                         </div>
-                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#333; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
+                        <div style="text-align:right; font-size:14px; font-weight:bold; color:#16161A; font-family:${AN_FONT}; white-space:nowrap;">${(Number(l.price) || 0).toLocaleString('ru-RU')} ₽</div>
                     </div>
                 </div>`;
         }).join('');
 
         detailsEl.innerHTML = `
-            <div style="background:linear-gradient(135deg, #FFF5E6 0%, #FFECD1 100%); border-radius:10px; padding:15px; border:2px solid #FFCF8B;">
+            <div style="background:#FCF4E8; border-radius:10px; padding:15px; border:2px solid #F0D8B0;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <h4 style="margin:0; font-size:15px; color:#E67E22; font-family:${AN_FONT};">Замены флориста «${floristName}» (${sorted.length})</h4>
-                    <button id="promo-florist-close-details" style="background:#E67E22; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
+                    <h4 style="margin:0; font-size:15px; color:#C77A18; font-family:${AN_FONT};">Замены флориста «${floristName}» (${sorted.length})</h4>
+                    <button id="promo-florist-close-details" style="background:#C77A18; color:white; border:none; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; font-family:${AN_FONT};">Скрыть</button>
                 </div>
                 <div style="max-height:400px; overflow-y:auto;">${items}</div>
             </div>`;
@@ -3700,7 +3848,7 @@
         console.log('deleteGooglePromoCode вызвана с кодом:', code);
         
         if (!isAdminAuthorized) {
-            showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
+            showNotification('Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
         
@@ -3745,7 +3893,7 @@
 
     async function deleteAmoCRMPromoCode(code, enumId) {
         if (!isAdminAuthorized) {
-            showNotification('🔒 Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
+            showNotification('Для удаления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
         
@@ -3907,7 +4055,7 @@
 
         // Проверка авторизации: начисление требует админа, списание - нет
         if (!isAdminAuthorized && action === 'add') {
-            showResult(resultDiv, '🔒 Для начисления баллов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
+            showResult(resultDiv, 'Для начисления баллов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
             return;
         }
 
@@ -4006,8 +4154,8 @@
 
     function renderBonusRequestsList() {
         if (bonusRequestsCache.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                <div style="font-size: 48px; margin-bottom: 15px;">📋</div>
+            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                <div style="font-size: 48px; margin-bottom: 15px;"></div>
                 <div style="font-size: 16px; margin-bottom: 10px;">Заявок пока нет</div>
                 <div style="font-size: 14px;">Нажмите "Синхронизировать" чтобы загрузить заявки из Google Таблицы</div>
             </div>`;
@@ -4015,32 +4163,32 @@
         
         return bonusRequestsCache.map(request => {
             const statusColors = {
-                'ожидает': { bg: '#fff3cd', text: '#856404', icon: '⏳' },
-                'одобрено': { bg: '#d4edda', text: '#155724', icon: '✅' },
-                'отклонено': { bg: '#f8d7da', text: '#721c24', icon: '❌' }
+                'ожидает': { bg: '#FCF4E8', text: '#856404' },
+                'одобрено': { bg: '#E6F4EC', text: '#1E6B44' },
+                'отклонено': { bg: '#FBECEC', text: '#721c24' }
             };
             
             const statusStyle = statusColors[request.status] || statusColors['ожидает'];
             
             return `
-                <div style="background: #f9f9f9; border: 2px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <div style="background: #FAFAFB; border: 1px solid #E7E7EC; border-radius: 10px; padding: 15px; margin-bottom: 15px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                         <div style="flex: 1;">
-                            <div style="font-size: 16px; font-weight: bold; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-bottom: 5px;">
+                            <div style="font-size: 16px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-bottom: 5px;">
                                 ${request.contactName || 'Без имени'} 
-                                <span style="font-size: 20px; color: #FFB8D1; margin-left: 10px;">+${request.points}</span>
+                                <span style="font-size: 20px; color: #E6407A; margin-left: 10px;">+${request.points}</span>
                             </div>
-                            <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                                 ${request.createdAt} • ${request.manager || 'Неизвестный менеджер'}
                             </div>
                         </div>
-                        <div style="display: inline-block; padding: 5px 12px; background: ${statusStyle.bg}; color: ${statusStyle.text}; border-radius: 15px; font-size: 12px; font-weight: 600; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            ${statusStyle.icon} ${request.status}
+                        <div style="display: inline-block; padding: 5px 12px; background: ${statusStyle.bg}; color: ${statusStyle.text}; border-radius: 15px; font-size: 12px; font-weight: 600; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                            ${request.status}
                         </div>
                     </div>
                     
-                    <div style="background: white; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <div style="background: white; padding: 10px; border-radius: 10px; margin-bottom: 10px;">
+                        <div style="font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             <strong>Причина:</strong> ${request.reason}
                         </div>
                     </div>
@@ -4048,39 +4196,39 @@
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <a href="${request.leadUrl}" target="_blank" style="
                             font-size: 12px;
-                            color: #FFB8D1;
+                            color: #E6407A;
                             text-decoration: none;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             font-weight: 600;
-                        ">🔗 Перейти в сделку</a>
+                        ">Перейти в сделку</a>
                         
                         ${isAdminAuthorized && request.status === 'ожидает' ? `
                             <div style="display: flex; gap: 10px;">
                                 <button class="approve-request-btn" data-request-id="${request.requestId}" data-contact-id="${request.contactId}" data-points="${request.points}" style="
                                     padding: 8px 16px;
-                                    background: #4CAF50;
+                                    background: #2E9E63;
                                     color: white;
                                     border: none;
-                                    border-radius: 6px;
+                                    border-radius: 10px;
                                     cursor: pointer;
                                     font-size: 13px;
-                                    font-weight: bold;
-                                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                                    font-weight: 600;
+                                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                                     transition: all 0.2s;
-                                ">✅ Одобрить</button>
+                                ">Одобрить</button>
                                 
                                 <button class="reject-request-btn" data-request-id="${request.requestId}" style="
                                     padding: 8px 16px;
-                                    background: #FF5252;
+                                    background: #D64545;
                                     color: white;
                                     border: none;
-                                    border-radius: 6px;
+                                    border-radius: 10px;
                                     cursor: pointer;
                                     font-size: 13px;
-                                    font-weight: bold;
-                                    font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                                    font-weight: 600;
+                                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                                     transition: all 0.2s;
-                                ">❌ Отклонить</button>
+                                ">Отклонить</button>
                             </div>
                         ` : ''}
                     </div>
@@ -4136,83 +4284,83 @@
         
         container.innerHTML = `
             <div style="max-width: 1000px; margin: 0 auto;">
-                <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 2px solid #e0e0e0;">
-                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Выберите период и фильтры</h3>
+                <div style="background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #E7E7EC;">
+                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Выберите период и фильтры</h3>
                     
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px;">
-                        <button class="period-btn" data-period="today" style="
+                        <button class="period-btn is-active" data-period="today" style="
                             padding: 12px;
-                            background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                            background: #E6407A;
                             color: white;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
                         ">Сегодня</button>
                         
                         <button class="period-btn" data-period="week" style="
                             padding: 12px;
-                            background: #f5f5f5;
-                            color: #666;
+                            background: #F7F7F9;
+                            color: #6E6E7A;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
                         ">Неделя</button>
                         
                         <button class="period-btn" data-period="month" style="
                             padding: 12px;
-                            background: #f5f5f5;
-                            color: #666;
+                            background: #F7F7F9;
+                            color: #6E6E7A;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
                         ">Месяц</button>
                         
                         <button class="period-btn" data-period="custom" style="
                             padding: 12px;
-                            background: #f5f5f5;
-                            color: #666;
+                            background: #F7F7F9;
+                            color: #6E6E7A;
                             border: none;
-                            border-radius: 6px;
+                            border-radius: 10px;
                             cursor: pointer;
                             font-size: 14px;
-                            font-weight: bold;
-                            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
+                            font-weight: 600;
+                            font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                             transition: all 0.2s;
                         ">Произвольный</button>
                     </div>
                     
                     <div style="margin-bottom: 20px;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Источник:</label>
-                        <select id="source-filter" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Источник:</label>
+                        <select id="source-filter" style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             <option value="all">Все источники</option>
-                            <option value="F5">⚡ Автоматические (Триггеры F5)</option>
-                            <option value="админ">👤 Ручные (Администратор)</option>
+                            <option value="F5">Автоматические (Триггеры F5)</option>
+                            <option value="админ">Ручные (Администратор)</option>
                         </select>
                     </div>
                     
                     <div id="custom-period-block" style="display: none; margin-bottom: 20px;">
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Начало периода:</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Начало периода:</label>
                                 <input type="date" id="custom-start-date" value="${todayStr}"
-                                    style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                    style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             </div>
                             <div>
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">Конец периода:</label>
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Конец периода:</label>
                                 <input type="date" id="custom-end-date" value="${todayStr}"
-                                    style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                                    style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             </div>
                         </div>
                     </div>
@@ -4220,83 +4368,82 @@
                     <button id="load-analytics-btn" style="
                         width: 100%;
                         padding: 15px;
-                        background: linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%);
+                        background: #E6407A;
                         color: white;
                         border: none;
-                        border-radius: 8px;
+                        border-radius: 10px;
                         cursor: pointer;
                         font-size: 16px;
-                        font-weight: bold;
-                        font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-                        box-shadow: 0 4px 15px rgba(255, 184, 209, 0.3);
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                     ">Загрузить аналитику</button>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-                    <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);">
-                        <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Начислено</div>
-                        <div id="total-added-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <div style="background: #EAF6F0; padding: 22px; border-radius: 14px; text-align: center;">
+                        <div style="font-size: 14px; color: #237A4C; margin-bottom: 8px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.9;">Начислено</div>
+                        <div id="total-added-display" style="font-size: 32px; font-weight: 700; color: #237A4C; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             0
                         </div>
-                        <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-added-rub">0 ₽</div>
+                        <div style="font-size: 14px; color: #237A4C; margin-top: 4px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.8;" id="total-added-rub">0 ₽</div>
                     </div>
                     
-                    <div style="background: linear-gradient(135deg, #FF5252 0%, #E53935 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);">
-                        <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Списано</div>
-                        <div id="total-subtracted-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <div style="background: #FBECEC; padding: 22px; border-radius: 14px; text-align: center;">
+                        <div style="font-size: 14px; color: #B23B3B; margin-bottom: 8px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.9;">Списано</div>
+                        <div id="total-subtracted-display" style="font-size: 32px; font-weight: 700; color: #B23B3B; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             0
                         </div>
-                        <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-subtracted-rub">0 ₽</div>
+                        <div style="font-size: 14px; color: #B23B3B; margin-top: 4px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.8;" id="total-subtracted-rub">0 ₽</div>
                     </div>
                     
-                    <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);">
-                        <div style="font-size: 14px; color: white; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.9;">Итого баллов</div>
-                        <div id="total-balance-display" style="font-size: 36px; font-weight: bold; color: white; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                    <div style="background: #EDF3FC; padding: 22px; border-radius: 14px; text-align: center;">
+                        <div style="font-size: 14px; color: #3169BC; margin-bottom: 8px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.9;">Итого баллов</div>
+                        <div id="total-balance-display" style="font-size: 32px; font-weight: 700; color: #3169BC; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                             0
                         </div>
-                        <div style="font-size: 14px; color: white; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; opacity: 0.8;" id="total-balance-rub">0 ₽</div>
+                        <div style="font-size: 14px; color: #3169BC; margin-top: 4px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; opacity: 0.8;" id="total-balance-rub">0 ₽</div>
                     </div>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
-                    <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #9C27B0;">
-                        <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">⚡ Автоматические начисления (F5)</div>
-                        <div id="f5-added-display" style="font-size: 28px; font-weight: bold; color: #9C27B0; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                        <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="f5-added-rub">0 ₽</div>
-                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-f5">Транзакций: 0</div>
+                    <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Автоматические начисления (F5)</div>
+                        <div id="f5-added-display" style="font-size: 28px; font-weight: 600; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="f5-added-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-f5">Транзакций: 0</div>
                     </div>
                     
-                    <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF9800;">
-                        <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">👤 Ручные операции (Админ)</div>
-                        <div id="admin-operations-display" style="font-size: 28px; font-weight: bold; color: #FF9800; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                        <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="admin-operations-rub">0 ₽</div>
-                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-admin">Транзакций: 0</div>
+                    <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Ручные операции (Админ)</div>
+                        <div id="admin-operations-display" style="font-size: 28px; font-weight: 600; color: #C77A18; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="admin-operations-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-admin">Транзакций: 0</div>
                     </div>
                 </div>
                 
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
-                    <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #4CAF50;">
-                        <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее начисление</div>
-                        <div id="avg-added-display" style="font-size: 28px; font-weight: bold; color: #4CAF50; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                        <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="avg-added-rub">0 ₽</div>
-                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-added">Транзакций: 0</div>
+                    <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Среднее начисление</div>
+                        <div id="avg-added-display" style="font-size: 28px; font-weight: 600; color: #2E9E63; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="avg-added-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-added">Транзакций: 0</div>
                     </div>
                     
-                    <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #FF5252;">
-                        <div style="font-size: 13px; color: #666; margin-bottom: 10px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">📊 Среднее списание</div>
-                        <div id="avg-subtracted-display" style="font-size: 28px; font-weight: bold; color: #FF5252; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">0</div>
-                        <div style="font-size: 12px; color: #999; margin-top: 3px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="avg-subtracted-rub">0 ₽</div>
-                        <div style="font-size: 11px; color: #999; margin-top: 5px; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;" id="count-subtracted">Транзакций: 0</div>
+                    <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Среднее списание</div>
+                        <div id="avg-subtracted-display" style="font-size: 28px; font-weight: 600; color: #D64545; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="avg-subtracted-rub">0 ₽</div>
+                        <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-subtracted">Транзакций: 0</div>
                     </div>
                 </div>
                 
-                <div style="background: white; padding: 20px; border-radius: 12px; border: 2px solid #e0e0e0;">
-                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #333; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">История транзакций</h3>
+                <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #E7E7EC;">
+                    <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">История транзакций</h3>
                     
                     <div id="analytics-transactions-list" style="max-height: 500px; overflow-y: auto;">
-                        <div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            <div style="font-size: 48px; margin-bottom: 15px;">📊</div>
+                        <div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                            <div style="font-size: 48px; margin-bottom: 15px;"></div>
                             <div style="font-size: 16px;">Нажмите "Загрузить аналитику" для просмотра данных</div>
                         </div>
                     </div>
@@ -4308,10 +4455,12 @@
         periodButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 periodButtons.forEach(b => {
-                    b.style.background = '#f5f5f5';
-                    b.style.color = '#666';
+                    b.classList.remove('is-active');
+                    b.style.background = '#F7F7F9';
+                    b.style.color = '#6E6E7A';
                 });
-                btn.style.background = 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)';
+                btn.classList.add('is-active');
+                btn.style.background = '#E6407A';
                 btn.style.color = 'white';
                 
                 const customBlock = document.getElementById('custom-period-block');
@@ -4325,14 +4474,7 @@
         
         const loadAnalyticsBtn = document.getElementById('load-analytics-btn');
         loadAnalyticsBtn.onclick = loadAnalytics;
-        loadAnalyticsBtn.onmouseover = () => {
-            loadAnalyticsBtn.style.transform = 'translateY(-2px)';
-            loadAnalyticsBtn.style.boxShadow = '0 8px 25px rgba(255, 184, 209, 0.5)';
-        };
-        loadAnalyticsBtn.onmouseout = () => {
-            loadAnalyticsBtn.style.transform = 'translateY(0)';
-            loadAnalyticsBtn.style.boxShadow = '0 4px 15px rgba(255, 184, 209, 0.3)';
-        };
+
         
         loadAnalytics();
     }
@@ -4343,7 +4485,7 @@
             return;
         }
         
-        const activePeriod = document.querySelector('.period-btn[style*="linear-gradient"]');
+        const activePeriod = document.querySelector('.period-btn.is-active');
         const period = activePeriod ? activePeriod.dataset.period : 'today';
         
         let startDate, endDate;
@@ -4484,8 +4626,8 @@
     function renderAnalyticsTransactions() {
         if (!analyticsCache.transactions || analyticsCache.transactions.length === 0) {
             return `
-                <div style="text-align: center; padding: 40px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                    <div style="font-size: 48px; margin-bottom: 15px;">📋</div>
+                <div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <div style="font-size: 48px; margin-bottom: 15px;"></div>
                     <div style="font-size: 16px;">Транзакций за выбранный период не найдено</div>
                 </div>
             `;
@@ -4495,10 +4637,10 @@
 
         return analyticsCache.transactions.map(transaction => {
             const isAddition = transaction.type === 'начисление';
-            const bgColor = isAddition ? '#e8f5e9' : '#ffebee';
-            const textColor = isAddition ? '#2e7d32' : '#c62828';
-            const icon = isAddition ? '➕' : '➖';
-            const sourceIcon = transaction.source === 'F5' ? '⚡' : transaction.source === 'админ' ? '👤' : '📝';
+            const bgColor = isAddition ? '#EAF6F0' : '#ffebee';
+            const textColor = isAddition ? '#237A4C' : '#B23B3B';
+            const icon = isAddition ? '+': '';
+            
 
             // Формируем ссылку на контакт
             let contactHtml = '';
@@ -4507,14 +4649,14 @@
                 if (transaction.contactId) {
                     const contactUrl = `https://${domain}/contacts/detail/${transaction.contactId}`;
                     contactHtml = `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            👤 <a href="${contactUrl}" target="_blank" style="color: #FFB8D1; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#FF69B4'; this.style.textDecoration='underline'" onmouseout="this.style.color='#FFB8D1'; this.style.textDecoration='none'">${contactName}</a>
+                        <div style="font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                            <a href="${contactUrl}" target="_blank" style="color: #E6407A; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#E6407A'; this.style.textDecoration='underline'" onmouseout="this.style.color='#E6407A'; this.style.textDecoration='none'">${contactName}</a>
                         </div>
                     `;
                 } else {
                     contactHtml = `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                            👤 ${contactName}
+                        <div style="font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                            ${contactName}
                         </div>
                     `;
                 }
@@ -4527,40 +4669,40 @@
                 if (transaction.leadId) {
                     const leadUrl = `https://${domain}/leads/detail/${transaction.leadId}`;
                     leadHtml = `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 3px;">
-                            💼 <a href="${leadUrl}" target="_blank" style="color: #FFB8D1; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#FF69B4'; this.style.textDecoration='underline'" onmouseout="this.style.color='#FFB8D1'; this.style.textDecoration='none'">${leadName}</a>
+                        <div style="font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-top: 3px;">
+                            <a href="${leadUrl}" target="_blank" style="color: #E6407A; text-decoration: none; font-weight: 600; transition: all 0.2s;" onmouseover="this.style.color='#E6407A'; this.style.textDecoration='underline'" onmouseout="this.style.color='#E6407A'; this.style.textDecoration='none'">${leadName}</a>
                         </div>
                     `;
                 } else {
                     leadHtml = `
-                        <div style="font-size: 13px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 3px;">
-                            💼 ${leadName}
+                        <div style="font-size: 13px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-top: 3px;">
+                            ${leadName}
                         </div>
                     `;
                 }
             }
 
             return `
-                <div style="background: ${bgColor}; border-left: 4px solid ${textColor}; border-radius: 8px; padding: 15px; margin-bottom: 10px;">
+                <div style="background: ${bgColor}; border-left: 4px solid ${textColor}; border-radius: 10px; padding: 15px; margin-bottom: 10px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
                         <div style="flex: 1;">
-                            <div style="font-size: 16px; font-weight: bold; color: ${textColor}; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
+                            <div style="font-size: 16px; font-weight: 600; color: ${textColor}; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                                 ${icon} ${transaction.type} • ${transaction.points} баллов (${transaction.points} ₽)
                             </div>
-                            <div style="font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 5px;">
+                            <div style="font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-top: 5px;">
                                 ${transaction.date}
                             </div>
                         </div>
                         <div style="text-align: right;">
-                            <div style="font-size: 12px; color: #666; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;">
-                                ${sourceIcon} ${transaction.source}
+                            <div style="font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                                ${transaction.source}
                             </div>
                         </div>
                     </div>
                     ${contactHtml}
                     ${leadHtml}
                     ${transaction.manager ? `
-                        <div style="font-size: 12px; color: #999; font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif; margin-top: 5px;">
+                        <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-top: 5px;">
                             Менеджер: ${transaction.manager}
                         </div>
                     ` : ''}
@@ -4641,9 +4783,9 @@
         // Добавляем выбранные категории
         const categoryLabels = selectedCategories.map(cat => {
             if (cat.customText) {
-                return `${REASON_CATEGORIES[cat.key].icon} ${cat.label}: ${cat.customText}`;
+                return `${cat.label}: ${cat.customText}`;
             }
-            return `${REASON_CATEGORIES[cat.key].icon} ${cat.label}`;
+            return `${cat.label}`;
         });
         if (categoryLabels.length > 0) {
             reasonParts.push(categoryLabels.join('; '));
@@ -5034,9 +5176,9 @@
         container.innerHTML = message;
         
         const colors = {
-            success: { bg: '#d4edda', border: '#c3e6cb', text: '#155724' },
-            error: { bg: '#f8d7da', border: '#f5c6cb', text: '#721c24' },
-            warning: { bg: '#fff3cd', border: '#ffeeba', text: '#856404' },
+            success: { bg: '#E6F4EC', border: '#c3e6cb', text: '#1E6B44' },
+            error: { bg: '#FBECEC', border: '#f5c6cb', text: '#721c24' },
+            warning: { bg: '#FCF4E8', border: '#ffeeba', text: '#856404' },
             info: { bg: '#d1ecf1', border: '#bee5eb', text: '#0c5460' }
         };
 
@@ -5047,26 +5189,17 @@
     }
 
     function showNotification(message, type) {
+        injectStyles();
+
+        // Одновременно висит только одно уведомление - предыдущее заменяем
+        document.querySelectorAll('.pcx-toast').forEach(el => el.remove());
+
         const notification = document.createElement('div');
+        notification.className = `pcx pcx-toast${type === 'error' ? ' pcx-toast--error' : type === 'warning' ? ' pcx-toast--warning' : type === 'info' ? ' pcx-toast--info' : ''}`;
         notification.textContent = message;
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 25px;
-            background: ${type === 'success' ? 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)' : type === 'error' ? 'linear-gradient(135deg, #FFB8D1 0%, #FF9EC4 100%)' : type === 'warning' ? 'linear-gradient(135deg, #FFD4E5 0%, #FFC2D4 100%)' : 'linear-gradient(135deg, #FFD4E5 0%, #FFC2D4 100%)'};
-            color: white;
-            border-radius: 8px;
-            z-index: 10002;
-            box-shadow: 0 6px 20px rgba(255, 184, 209, 0.4);
-            font-size: 14px;
-            font-family: 'Gotham Rounded', 'Avenir', 'Century Gothic', 'Trebuchet MS', 'Arial Rounded MT Bold', sans-serif;
-            font-weight: 600;
-            animation: slideIn 0.3s ease-out;
-        `;
 
         document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 3000);
+        setTimeout(() => notification.remove(), type === 'error' ? 5000 : 3000);
     }
 
     function formatDate(dateStr) {
@@ -5087,8 +5220,11 @@
 
     function init() {
         console.log('Инициализация Promo Codes Manager...');
+        injectStyles();
+        injectFont();
         loadSettings();
         createPromoButton();
+        setTimeout(checkForScriptUpdate, 8000);   // не мешаем загрузке страницы сделки
     }
 
     if (document.readyState === 'loading') {

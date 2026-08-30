@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.0.0
+// @version      10.1.0
 // @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -10,6 +10,7 @@
 // @downloadURL  https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
 // @grant        GM.xmlHttpRequest
 // @connect      store.tildaapi.com
+// @connect      raw.githubusercontent.com
 // @connect      orangesmr.ru
 // @connect      static.tildacdn.com
 // @connect      *
@@ -18,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.0.0';
+    const SCRIPT_VERSION = '10.1.0';
 
     // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
     // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
@@ -153,6 +154,90 @@
             }
         `).join('');
         document.head.appendChild(style);
+    }
+
+    // Раз в час сверяем свою версию с той, что лежит на GitHub: менеджеру не надо
+    // ни лезть в панель Tampermonkey, ни ждать суточной автопроверки.
+    const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js';
+    const UPDATE_CHECKED_KEY = 'orange_catalog_update_checked_at';
+    const UPDATE_SNOOZED_KEY = 'orange_catalog_update_snoozed';
+    const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;   // не чаще раза в час
+    const UPDATE_SNOOZE_TIME = 24 * 60 * 60 * 1000; // «Позже» - молчим сутки про эту версию
+
+    // Сравнение версий вида 10.1.0: >0 если a новее b
+    function compareVersions(a, b) {
+        const pa = String(a).split('.').map(n => parseInt(n) || 0);
+        const pb = String(b).split('.').map(n => parseInt(n) || 0);
+        for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pa[i] || 0) - (pb[i] || 0);
+            if (diff !== 0) return diff;
+        }
+        return 0;
+    }
+
+    function fetchLatestVersion() {
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: `${SCRIPT_RAW_URL}?t=${Date.now()}`,
+                headers: { 'Range': 'bytes=0-2047' },   // шапки хватает, файл целиком не тянем
+                onload: (response) => {
+                    const match = /@version\s+([\d.]+)/.exec(response.responseText || '');
+                    match ? resolve(match[1]) : reject(new Error('версия не найдена'));
+                },
+                onerror: () => reject(new Error('сеть')),
+                timeout: 15000
+            });
+        });
+    }
+
+    function showUpdateBanner(latest) {
+        if (document.getElementById('ocx-update-banner')) return;
+
+        injectStyles();
+        const banner = document.createElement('div');
+        banner.id = 'ocx-update-banner';
+        banner.className = 'ocx ocx-update';
+        banner.innerHTML = `
+            <div class="ocx-update__title">Вышла новая версия каталога</div>
+            <div class="ocx-update__text">Установлена ${SCRIPT_VERSION}, доступна ${latest}. Нажмите «Обновить» - откроется вкладка Tampermonkey, там нажмите кнопку обновления.</div>
+            <div class="ocx-update__actions">
+                <button class="ocx-btn ocx-btn--ghost" data-act="later">Позже</button>
+                <button class="ocx-btn ocx-btn--primary" data-act="update">Обновить</button>
+            </div>
+        `;
+
+        banner.querySelector('[data-act="update"]').onclick = () => {
+            window.open(SCRIPT_RAW_URL, '_blank');
+            banner.remove();
+        };
+        banner.querySelector('[data-act="later"]').onclick = () => {
+            try {
+                localStorage.setItem(UPDATE_SNOOZED_KEY, JSON.stringify({ version: latest, until: Date.now() + UPDATE_SNOOZE_TIME }));
+            } catch (error) { /* не критично */ }
+            banner.remove();
+        };
+
+        document.body.appendChild(banner);
+    }
+
+    async function checkForScriptUpdate() {
+        try {
+            const checkedAt = parseInt(localStorage.getItem(UPDATE_CHECKED_KEY)) || 0;
+            if (Date.now() - checkedAt < UPDATE_CHECK_INTERVAL) return;
+            localStorage.setItem(UPDATE_CHECKED_KEY, String(Date.now()));
+
+            const latest = await fetchLatestVersion();
+            if (compareVersions(latest, SCRIPT_VERSION) <= 0) return;
+
+            const snoozed = JSON.parse(localStorage.getItem(UPDATE_SNOOZED_KEY) || 'null');
+            if (snoozed && snoozed.version === latest && Date.now() < snoozed.until) return;
+
+            console.log(`Каталог: доступна версия ${latest}, установлена ${SCRIPT_VERSION}`);
+            showUpdateBanner(latest);
+        } catch (error) {
+            console.warn('Проверка обновлений не удалась:', error);
+        }
     }
 
     // Тонкие иконки вместо эмодзи
@@ -488,6 +573,19 @@
             .ocx-pick__title { font-size: 13px; font-weight: 600; line-height: 1.25; color: var(--ocx-text); }
             .ocx-pick__price { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--ocx-text-2); }
             .ocx-pick__price span { color: var(--ocx-text-3); font-weight: 500; }
+
+            /* Плашка «вышла новая версия» */
+            .ocx-update {
+                position: fixed; left: 20px; bottom: 20px; z-index: 10004;
+                width: 320px; padding: 16px 18px;
+                background: var(--ocx-surface); border: 1px solid var(--ocx-border);
+                border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);
+                animation: ocx-slide 0.22s ease-out;
+            }
+            .ocx-update__title { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--ocx-text); margin-bottom: 4px; }
+            .ocx-update__text { font-size: 12.5px; font-weight: 500; line-height: 1.45; color: var(--ocx-text-2); margin-bottom: 14px; }
+            .ocx-update__actions { display: flex; gap: 8px; }
+            .ocx-update__actions .ocx-btn { flex: 1; height: 34px; font-size: 13px; }
 
             /* Уведомления */
             .ocx-toast {
@@ -2058,6 +2156,7 @@
     injectStyles();
     injectFont();
     initCatalog();
+    setTimeout(checkForScriptUpdate, 8000);   // не мешаем загрузке страницы сделки
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', createMainButton);
