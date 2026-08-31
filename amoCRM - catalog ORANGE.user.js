@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.2.0
+// @version      10.2.1
 // @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.2.0';
+    const SCRIPT_VERSION = '10.2.1';
 
     // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
     // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
@@ -341,6 +341,7 @@
                 color: var(--ocx-text);
             }
             .ocx-head {
+                flex: 0 0 auto;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
@@ -369,6 +370,7 @@
 
             /* Панель фильтров */
             .ocx-filters {
+                flex: 0 0 auto;
                 display: flex;
                 align-items: center;
                 gap: 8px;
@@ -443,7 +445,7 @@
             .ocx-btn--quiet:hover { background: var(--ocx-surface-2); color: var(--ocx-text); }
             .ocx-btn--wide { width: 100%; }
 
-            .ocx-summary { padding: 12px 24px 0; font-size: 13px; font-weight: 500; color: var(--ocx-text-3); }
+            .ocx-summary { flex: 0 0 auto; padding: 12px 24px 0; font-size: 13px; font-weight: 500; color: var(--ocx-text-3); }
             .ocx-filters { position: relative; z-index: 2; box-shadow: 0 4px 10px rgba(18, 18, 30, 0.05); }
 
             /* Галерея */
@@ -507,6 +509,7 @@
 
             /* Низ окна */
             .ocx-foot {
+                flex: 0 0 auto;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
@@ -594,7 +597,7 @@
 
             /* Плашка «вышла новая версия» */
             .ocx-update {
-                position: fixed; right: 20px; top: 20px; z-index: 10004;
+                position: fixed; right: 20px; top: 20px; z-index: 9997;
                 width: 320px; padding: 16px 18px;
                 background: var(--ocx-surface); border: 1px solid var(--ocx-border);
                 border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);

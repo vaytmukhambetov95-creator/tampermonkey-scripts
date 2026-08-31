@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.1.0
+// @version      3.1.1
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.1.0';
+    const SCRIPT_VERSION = '3.1.1';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -310,6 +310,7 @@
             }
 
             .pcx-head {
+                flex: 0 0 auto;
                 display: flex; align-items: center; justify-content: space-between; gap: 16px;
                 padding: 20px 24px; border-bottom: 1px solid var(--pcx-border);
                 background: var(--pcx-surface); position: relative; z-index: 2;
@@ -326,6 +327,7 @@
 
             /* Вкладки */
             .pcx-tabs {
+                flex: 0 0 auto;
                 display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; padding: 8px 16px;
                 border-bottom: 1px solid var(--pcx-border);
                 background: var(--pcx-surface); position: relative; z-index: 2;
@@ -333,7 +335,7 @@
                 overflow-x: auto;
             }
             .promo-tab {
-                flex: none;
+                flex: 0 0 auto;
                 height: 36px; padding: 0 14px;
                 border: none; border-radius: 9px; background: transparent;
                 font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em;
@@ -404,7 +406,7 @@
 
             /* Плашка «вышла новая версия» */
             .pcx-update {
-                position: fixed; right: 20px; top: 20px; z-index: 10004;
+                position: fixed; right: 20px; top: 20px; z-index: 9997;
                 width: 320px; padding: 16px 18px;
                 background: var(--pcx-surface); border: 1px solid var(--pcx-border);
                 border-radius: 14px; box-shadow: 0 18px 44px rgba(18, 18, 30, 0.18);
