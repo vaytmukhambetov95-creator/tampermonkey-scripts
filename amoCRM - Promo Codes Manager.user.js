@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.1.1
+// @version      3.2.0
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.1.1';
+    const SCRIPT_VERSION = '3.2.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -676,10 +676,6 @@
 
         const checkBtn = document.getElementById('check-promo-btn');
         checkBtn.onclick = checkPromoCode;
-        checkBtn.onmouseover = () => {
-        };
-        checkBtn.onmouseout = () => {
-        };
         
         document.getElementById('promo-code-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') checkPromoCode();
@@ -984,34 +980,14 @@
 
         const addGoogleBtn = document.getElementById('add-promo-google-btn');
         addGoogleBtn.onclick = () => addPromoCode('google');
-        addGoogleBtn.onmouseover = () => {
-            addGoogleBtn.style.background = '#E6407A';
-        };
-        addGoogleBtn.onmouseout = () => {
-            addGoogleBtn.style.background = '#E6407A';
-        };
 
         const addAmoCRMBtn = document.getElementById('add-promo-amocrm-btn');
         addAmoCRMBtn.onclick = () => addPromoCode('amocrm');
-        addAmoCRMBtn.onmouseover = () => {
-            addAmoCRMBtn.style.background = '#E6407A';
-        };
-        addAmoCRMBtn.onmouseout = () => {
-            addAmoCRMBtn.style.background = '#E6407A';
-        };
 
         // Обработчик кнопки сохранения друзей
         const saveFriendsBtn = document.getElementById('save-friends-settings-btn');
         if (saveFriendsBtn) {
             saveFriendsBtn.onclick = saveFriendsSettings;
-            saveFriendsBtn.onmouseover = () => {
-                saveFriendsBtn.style.boxShadow = '0 8px 25px rgba(255, 105, 180, 0.5)';
-                saveFriendsBtn.style.background = '#FF85C1';
-            };
-            saveFriendsBtn.onmouseout = () => {
-                saveFriendsBtn.style.boxShadow = '0 4px 15px rgba(255, 105, 180, 0.3)';
-                saveFriendsBtn.style.background = '#E6407A';
-            };
         }
     }
 
@@ -1228,7 +1204,7 @@
                     ? binding.usages.map(u => `
                         <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; color: #6E6E7A;">
                             <span>• ${u.date}</span>
-                            ${u.leadUrl ? `<a href="${u.leadUrl}"target="_blank"style="color: #E6407A; text-decoration: none;">Сделка </a>`: ''}
+                            ${u.leadUrl ? `<a href="${u.leadUrl}" target="_blank" style="color: #E6407A; text-decoration: none;">Сделка </a>`: ''}
                         </div>
                     `).join('')
                     : '<div style="font-size: 12px; color: #9C9CA8; padding: 4px 0;">Нет использований</div>';
@@ -1701,10 +1677,10 @@
 
                 <div style="background: #F7F7F9; padding: 20px; border-radius: 14px; margin-top: 30px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0; font-size: 18px; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Аналитика по причинам начисления</h3>
+                        <h3 style="margin: 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Аналитика по причинам начисления</h3>
                         <button id="load-category-analytics-btn" style="
                             padding: 8px 16px;
-                            background: #7B57C4;
+                            background: #E6407A;
                             color: white;
                             border: none;
                             border-radius: 10px;
@@ -1719,31 +1695,31 @@
                     <div id="category-analytics-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблемы с доставкой</div>
-                            <div id="category-delivery-count" style="font-size: 28px; font-weight: 600; color: #C77A18; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div id="category-delivery-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-delivery-points">0 баллов</div>
                         </div>
 
-                        <div style="background: white; padding: 20px; border-radius: 12px; border: 1px solid #E7E7EC;">
+                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблема с качеством</div>
-                            <div id="category-quality-count" style="font-size: 28px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div id="category-quality-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-quality-points">0 баллов</div>
                         </div>
 
                         <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Жалобы на открытку</div>
-                            <div id="category-card-count" style="font-size: 28px; font-weight: 600; color: #3B7BD6; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div id="category-card-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-card-points">0 баллов</div>
                         </div>
 
                         <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Прочие проблемы</div>
-                            <div id="category-other_problems-count" style="font-size: 28px; font-weight: 600; color: #607D8B; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div id="category-other_problems-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-other_problems-points">0 баллов</div>
                         </div>
 
                         <div style="background: #F7F7F9; padding: 20px; border-radius: 14px; grid-column: span 2;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Другое (своя причина)</div>
-                            <div id="category-custom-count" style="font-size: 28px; font-weight: 600; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                            <div id="category-custom-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-custom-points">0 баллов</div>
                         </div>
                     </div>
@@ -1762,66 +1738,28 @@
             const subtractBtn = document.getElementById('subtract-bonus-btn');
             
             addBtn.onclick = () => modifyBonusPoints('add');
-            addBtn.onmouseover = () => {
-                addBtn.style.boxShadow = '0 8px 25px rgba(76, 175, 80, 0.5)';
-            };
-            addBtn.onmouseout = () => {
-                addBtn.style.boxShadow = '0 4px 15px rgba(76, 175, 80, 0.3)';
-            };
             
             subtractBtn.onclick = () => modifyBonusPoints('subtract');
-            subtractBtn.onmouseover = () => {
-                subtractBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
-            };
-            subtractBtn.onmouseout = () => {
-                subtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
-            };
         }
 
         // Обработчик для публичной кнопки списания (без админа)
         const publicSubtractBtn = document.getElementById('subtract-bonus-btn-public');
         if (publicSubtractBtn) {
             publicSubtractBtn.onclick = () => modifyBonusPoints('subtract', 'subtract-points-input', 'subtract-result');
-            publicSubtractBtn.onmouseover = () => {
-                publicSubtractBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
-            };
-            publicSubtractBtn.onmouseout = () => {
-                publicSubtractBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
-            };
         }
 
         const createRequestBtn = document.getElementById('create-request-btn');
         createRequestBtn.onclick = createBonusRequest;
-        createRequestBtn.onmouseover = () => {
-        };
-        createRequestBtn.onmouseout = () => {
-        };
         
         const syncRequestsBtn = document.getElementById('sync-requests-btn');
         if (syncRequestsBtn) {
             syncRequestsBtn.onclick = () => syncBonusRequests(false);
-            syncRequestsBtn.onmouseover = () => {
-                syncRequestsBtn.style.transform = 'scale(1.05)';
-                syncRequestsBtn.style.background = '#E6407A';
-            };
-            syncRequestsBtn.onmouseout = () => {
-                syncRequestsBtn.style.transform = 'scale(1)';
-                syncRequestsBtn.style.background = '#E6407A';
-            };
         }
 
         // Обработчик для кнопки загрузки аналитики по категориям
         const loadCategoryAnalyticsBtn = document.getElementById('load-category-analytics-btn');
         if (loadCategoryAnalyticsBtn) {
             loadCategoryAnalyticsBtn.onclick = loadCategoryAnalytics;
-            loadCategoryAnalyticsBtn.onmouseover = () => {
-                loadCategoryAnalyticsBtn.style.transform = 'scale(1.05)';
-                loadCategoryAnalyticsBtn.style.background = '#AB47BC';
-            };
-            loadCategoryAnalyticsBtn.onmouseout = () => {
-                loadCategoryAnalyticsBtn.style.transform = 'scale(1)';
-                loadCategoryAnalyticsBtn.style.background = '#7B57C4';
-            };
         }
 
         attachBonusRequestsButtonsListeners();
@@ -1947,11 +1885,11 @@
             // Проверяем, есть ли промокод в amoCRM
             const isInAmoCRM = amoCRMCodesSet.has(promo.code.toUpperCase());
             const missingBadge = !isInAmoCRM ? `
-                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #FCF4E8; border-radius: 10px; border-left: 3px solid #C77A18;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #FCF4E8; border-radius: 10px;">
                     <span style="font-size: 12px; color: #A85F0F; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; font-weight: 600;">Нет в amoCRM</span>
                     <button class="add-to-amocrm-btn" data-promo-code="${promo.code}" style="
                         padding: 4px 10px;
-                        background: #3B7BD6;
+                        background: #E6407A;
                         color: white;
                         border: none;
                         border-radius: 4px;
@@ -1961,7 +1899,7 @@
                         font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.2s;
                         margin-left: auto;
-                    " onmouseover="this.style.background='#42A5F5'; this.style.transform='scale(1.05)'" onmouseout="this.style.background='#3B7BD6'; this.style.transform='scale(1)'">+ Добавить в amoCRM</button>
+                    ">+ Добавить в amoCRM</button>
                 </div>
             ` : '';
 
@@ -1990,7 +1928,7 @@
                         line-height: 1;
                         padding: 0;
                         z-index: 10;
-                    " onmouseover="this.style.background='#B23B3B'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#D64545'; this.style.transform='scale(1)'">×</button>
+                    ">×</button>
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; padding-right: 30px;">
                         <div>
                             <div style="font-size: 18px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin-bottom: 5px;">${promo.code}</div>
@@ -2046,7 +1984,7 @@
                         font-weight: 600;
                         line-height: 1;
                         padding: 0;
-                    " onmouseover="this.style.background='#B23B3B'; this.style.transform='scale(1.1)'" onmouseout="this.style.background='#D64545'; this.style.transform='scale(1)'">×</button>
+                    ">×</button>
                     <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 30px;">
                         <div style="font-size: 16px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${promo.value}</div>
                         <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">ID: ${promo.id}</div>
@@ -2169,7 +2107,7 @@
             employees.forEach(([employee, data], index) => {
                 const leadsLinks = data.leads.map((url, i) => {
                     if (url) {
-                        return `<a href="${url}"target="_blank"style="display: inline-block; margin: 2px; padding: 3px 8px; background: #E6407A; color: white; text-decoration: none; border-radius: 4px; font-size: 11px;"title="${url}">${i + 1}</a>`;
+                        return `<a href="${url}" target="_blank" style="display: inline-block; margin: 2px; padding: 3px 8px; background: #E6407A; color: white; text-decoration: none; border-radius: 4px; font-size: 11px;" title="${url}">${i + 1}</a>`;
                     }
                     return '';
                 }).filter(l => l).join('');
@@ -2388,7 +2326,7 @@
                 
                 <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
                 
-                <div style="background: ${isAdminAuthorized ? '#E6F4EC' : '#FCF4E8'}; padding: 20px; border-radius: 10px; border-left: 4px solid ${isAdminAuthorized ? '#2E9E63' : '#C77A18'};">
+                <div style="background: ${isAdminAuthorized ? '#E6F4EC' : '#FCF4E8'}; padding: 20px; border-radius: 14px;">
                     <h3 style="margin: 0 0 15px 0; font-size: 16px; color: ${isAdminAuthorized ? '#1E6B44' : '#A85F0F'}; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                         ${isAdminAuthorized ? 'Режим администратора': 'Защита данных'}
                     </h3>
@@ -2435,17 +2373,9 @@
         
         const syncGoogleBtn = document.getElementById('sync-google-sheet-btn');
         syncGoogleBtn.onclick = () => syncWithGoogleSheet(false);
-        syncGoogleBtn.onmouseover = () => {
-        };
-        syncGoogleBtn.onmouseout = () => {
-        };
         
         const syncAmoCRMBtn = document.getElementById('sync-amocrm-btn');
         syncAmoCRMBtn.onclick = () => syncWithAmoCRM(false);
-        syncAmoCRMBtn.onmouseover = () => {
-        };
-        syncAmoCRMBtn.onmouseout = () => {
-        };
 
         const syncAmoCRMToGoogleBtn = document.getElementById('sync-amocrm-to-google-btn');
         syncAmoCRMToGoogleBtn.onclick = async () => {
@@ -2459,14 +2389,6 @@
             }
             await syncAmoCRMToGoogleSheets();
         };
-        syncAmoCRMToGoogleBtn.onmouseover = () => {
-            syncAmoCRMToGoogleBtn.style.boxShadow = '0 8px 25px rgba(156, 39, 176, 0.5)';
-            syncAmoCRMToGoogleBtn.style.background = '#AB47BC';
-        };
-        syncAmoCRMToGoogleBtn.onmouseout = () => {
-            syncAmoCRMToGoogleBtn.style.boxShadow = '0 4px 15px rgba(156, 39, 176, 0.3)';
-            syncAmoCRMToGoogleBtn.style.background = '#7B57C4';
-        };
 
         const syncGoogleToAmoCRMBtn = document.getElementById('sync-google-to-amocrm-btn');
         syncGoogleToAmoCRMBtn.onclick = async () => {
@@ -2475,14 +2397,6 @@
                 return;
             }
             await syncGoogleToAmoCRM();
-        };
-        syncGoogleToAmoCRMBtn.onmouseover = () => {
-            syncGoogleToAmoCRMBtn.style.boxShadow = '0 8px 25px rgba(33, 150, 243, 0.5)';
-            syncGoogleToAmoCRMBtn.style.background = '#42A5F5';
-        };
-        syncGoogleToAmoCRMBtn.onmouseout = () => {
-            syncGoogleToAmoCRMBtn.style.boxShadow = '0 4px 15px rgba(33, 150, 243, 0.3)';
-            syncGoogleToAmoCRMBtn.style.background = '#3B7BD6';
         };
 
         if (isAdminAuthorized) {
@@ -2496,28 +2410,12 @@
                         switchTab('settings');
                     }
                 };
-                adminLogoutBtn.onmouseover = () => {
-                    adminLogoutBtn.style.boxShadow = '0 8px 25px rgba(255, 82, 82, 0.5)';
-                    adminLogoutBtn.style.background = '#D64545';
-                };
-                adminLogoutBtn.onmouseout = () => {
-                    adminLogoutBtn.style.boxShadow = '0 4px 15px rgba(255, 82, 82, 0.3)';
-                    adminLogoutBtn.style.background = '#D64545';
-                };
             }
         } else {
             const adminAuthBtn = document.getElementById('admin-auth-btn');
             if (adminAuthBtn) {
                 adminAuthBtn.onclick = () => {
                     showAdminPasswordModal();
-                };
-                adminAuthBtn.onmouseover = () => {
-                    adminAuthBtn.style.boxShadow = '0 8px 25px rgba(255, 152, 0, 0.5)';
-                    adminAuthBtn.style.background = '#FFA726';
-                };
-                adminAuthBtn.onmouseout = () => {
-                    adminAuthBtn.style.boxShadow = '0 4px 15px rgba(255, 152, 0, 0.3)';
-                    adminAuthBtn.style.background = '#C77A18';
                 };
             }
         }
@@ -3520,7 +3418,7 @@
             <div id="promo-analytics-section" style="background: #FDEFF4; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
                 <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #E6407A; font-family: ${AN_FONT}; display: flex; align-items: center; gap: 10px;">
                      Аналитика применения промокодов
-                    <button id="refresh-promo-analytics-btn"style="padding: 5px 12px; background: #E6407A; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">Обновить</button>
+                    <button id="refresh-promo-analytics-btn" style="padding: 5px 12px; background: #E6407A; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">Обновить</button>
                 </h3>
                 <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 12px; font-family: ${AN_FONT};">Поднимает сделки по значению поля промокода прямо из amoCRM.</div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
@@ -3680,7 +3578,7 @@
             const m = c.metrics;
             const parsed = parseAmoCRMPromoCode(c.code);
             return `
-                <tr class="promo-an-row" data-enum-id="${c.enumId}" style="cursor:pointer; border-bottom:1px solid #FDEFF4; transition:background 0.15s;" onmouseover="this.style.background='#FDEFF4'" onmouseout="this.style.background='transparent'">
+                <tr class="promo-an-row" data-enum-id="${c.enumId}" style="cursor:pointer; border-bottom:1px solid #FDEFF4; transition:background 0.15s;">
                     <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:#16161A; font-weight:600;">${parsed.code}${parsed.description ? ` <span style="color:#9C9CA8; font-weight:400;">(${parsed.description})</span>` : ''}</td>
                     <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#CF356B; font-weight:bold;">${m.count}</td>
                     <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#16161A;">${m.sumBudget.toLocaleString('ru-RU')} ₽</td>
@@ -3763,7 +3661,7 @@
                 <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
                         <div style="flex:1;">
-                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}"target="_blank"style="color:#E6407A; text-decoration:none; font-weight:600;"onmouseover="this.style.textDecoration='underline'"onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}" target="_blank" style="color:#E6407A; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
                             <div style="font-size:12px; color:#6E6E7A; font-family:${AN_FONT}; margin-top:4px;">${stage} • ${analytics.pipelineName || ''}</div>
                             <div style="font-size:11px; color:#9C9CA8; font-family:${AN_FONT}; margin-top:3px;">${dateStr}</div>
                         </div>
@@ -3829,7 +3727,7 @@
         const rowsHtml = rows.map(r => {
             const isUnknown = r.name === 'Не указан';
             return `
-                <tr class="promo-florist-row" data-florist="${encodeURIComponent(r.name)}" style="cursor:pointer; border-bottom:1px solid #FFE0B2; transition:background 0.15s;" onmouseover="this.style.background='#FFF7EC'" onmouseout="this.style.background='transparent'">
+                <tr class="promo-florist-row" data-florist="${encodeURIComponent(r.name)}" style="cursor:pointer; border-bottom:1px solid #FFE0B2; transition:background 0.15s;">
                     <td style="padding:10px 8px; font-family:${AN_FONT}; font-size:13px; color:${isUnknown ? '#9C9CA8' : '#16161A'}; font-weight:600;">${r.name}</td>
                     <td style="padding:10px 8px; text-align:center; font-family:${AN_FONT}; font-size:14px; color:#C77A18; font-weight:bold;">${r.metrics.count}</td>
                     <td style="padding:10px 8px; text-align:right; font-family:${AN_FONT}; font-size:13px; color:#16161A;">${r.metrics.sumBudget.toLocaleString('ru-RU')} ₽</td>
@@ -3887,7 +3785,7 @@
                 <div style="background:#fff; border-left:4px solid ${stageColor}; border-radius:8px; padding:12px; margin-bottom:8px;">
                     <div style="display:flex; justify-content:space-between; align-items:start; gap:10px;">
                         <div style="flex:1;">
-                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}"target="_blank"style="color:#C77A18; text-decoration:none; font-weight:600;"onmouseover="this.style.textDecoration='underline'"onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
+                            <div style="font-size:14px; font-family:${AN_FONT};"><a href="${url}" target="_blank" style="color:#C77A18; text-decoration:none; font-weight:600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${l.name}</a></div>
                             <div style="font-size:12px; color:#6E6E7A; font-family:${AN_FONT}; margin-top:4px;">${stage} • ${analytics.pipelineName || ''}</div>
                             <div style="font-size:11px; color:#9C9CA8; font-family:${AN_FONT}; margin-top:3px;">${dateStr}</div>
                         </div>
@@ -4516,14 +4414,14 @@
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                     <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                         <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Автоматические начисления (F5)</div>
-                        <div id="f5-added-display" style="font-size: 28px; font-weight: 600; color: #7B57C4; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div id="f5-added-display" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                         <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="f5-added-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-f5">Транзакций: 0</div>
                     </div>
                     
                     <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
                         <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Ручные операции (Админ)</div>
-                        <div id="admin-operations-display" style="font-size: 28px; font-weight: 600; color: #C77A18; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
+                        <div id="admin-operations-display" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                         <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="admin-operations-rub">0 ₽</div>
                         <div style="font-size: 11px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="count-admin">Транзакций: 0</div>
                     </div>
@@ -4790,7 +4688,7 @@
             }
 
             return `
-                <div style="background: ${bgColor}; border-left: 4px solid ${textColor}; border-radius: 10px; padding: 15px; margin-bottom: 10px;">
+                <div style="background: ${bgColor}; border-radius: 12px; padding: 15px; margin-bottom: 10px;">
                     <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
                         <div style="flex: 1;">
                             <div style="font-size: 16px; font-weight: 600; color: ${textColor}; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
@@ -5291,7 +5189,7 @@
 
         const color = colors[type] || colors.info;
         container.style.background = color.bg;
-        container.style.borderLeft = `4px solid ${color.border}`;
+        container.style.borderRadius = '12px';
         container.style.color = color.text;
     }
 
