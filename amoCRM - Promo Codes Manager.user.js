@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.2.0
+// @version      3.2.1
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.2.0';
+    const SCRIPT_VERSION = '3.2.1';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -345,6 +345,9 @@
             .promo-tab:hover { background: var(--pcx-surface-2); color: var(--pcx-text); }
             .promo-tab:focus { outline: none; }
             .promo-tab:focus-visible { outline: 2px solid var(--pcx-accent); outline-offset: 2px; }
+            #promo-codes-overlay button:focus, #promo-codes-overlay input:focus,
+            #promo-codes-overlay select:focus, #promo-codes-overlay textarea:focus { outline: none !important; }
+            #promo-codes-overlay button:focus-visible { outline: 2px solid var(--pcx-accent) !important; outline-offset: 2px; }
             .promo-tab.active { background: var(--pcx-accent-soft); color: var(--pcx-accent); }
 
             #promo-modal-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 22px 24px 26px;
@@ -643,7 +646,7 @@
                     <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Бюджет автоматически подставлен из сделки</div>
                 </div>
 
-                <div id="employee-referral-block" style="display: none; margin-bottom: 20px; background: #FDEFF4; padding: 15px; border-radius: 10px; border: 1px solid #E7E7EC;">
+                <div id="employee-referral-block" style="display: none; margin-bottom: 20px; background: #F7F7F9; padding: 15px; border-radius: 10px; border: 1px solid #E7E7EC;">
                     <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">От кого пришёл клиент:</label>
                     <select id="employee-referral-select" style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; background: white;">
                         <option value="">-- Выберите сотрудника --</option>
@@ -880,9 +883,9 @@
                 
                 <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 10px; display: none;"></div>
 
-                <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
+                <hr style="border: none; border-top: 1px solid #E7E7EC; margin: 30px 0;">
 
-                <div style="background: #FDEFF4; padding: 20px; border-radius: 10px; border: 1px solid #E7E7EC;">
+                <div style="background: #F7F7F9; padding: 20px; border-radius: 10px; border: 1px solid #E7E7EC;">
                     <h3 style="margin: 0 0 20px 0; font-size: 16px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                          Промокод для друзей сотрудников
                     </h3>
@@ -1693,38 +1696,38 @@
                     </div>
 
                     <div id="category-analytics-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="background: #FFFFFF; border: 1px solid #E7E7EC; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблемы с доставкой</div>
                             <div id="category-delivery-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-delivery-points">0 баллов</div>
                         </div>
 
-                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="background: #FFFFFF; border: 1px solid #E7E7EC; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Проблема с качеством</div>
                             <div id="category-quality-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-quality-points">0 баллов</div>
                         </div>
 
-                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="background: #FFFFFF; border: 1px solid #E7E7EC; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Жалобы на открытку</div>
                             <div id="category-card-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-card-points">0 баллов</div>
                         </div>
 
-                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px;">
+                        <div style="background: #FFFFFF; border: 1px solid #E7E7EC; padding: 20px; border-radius: 14px;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Прочие проблемы</div>
                             <div id="category-other_problems-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-other_problems-points">0 баллов</div>
                         </div>
 
-                        <div style="background: #F7F7F9; padding: 20px; border-radius: 14px; grid-column: span 2;">
+                        <div style="background: #FFFFFF; border: 1px solid #E7E7EC; padding: 20px; border-radius: 14px; grid-column: span 2;">
                             <div style="font-size: 13px; color: #6E6E7A; margin-bottom: 10px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Другое (своя причина)</div>
                             <div id="category-custom-count" style="font-size: 28px; font-weight: 700; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                             <div style="font-size: 12px; color: #9C9CA8; margin-top: 3px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="category-custom-points">0 баллов</div>
                         </div>
                     </div>
 
-                    <div style="margin-top: 20px; padding: 15px; background: #F7F7F9; border-radius: 10px; text-align: center;">
+                    <div style="margin-top: 20px; padding: 15px; background: #FFFFFF; border: 1px solid #E7E7EC; border-radius: 14px; text-align: center;">
                         <div style="font-size: 12px; color: #6E6E7A; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Всего заявок</div>
                         <div id="category-total-requests" style="font-size: 24px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0</div>
                         <div id="category-total-points" style="font-size: 14px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">0 баллов</div>
@@ -1782,7 +1785,7 @@
                     border-radius: 4px;
                 }
                 #amocrm-promos-list::-webkit-scrollbar-thumb {
-                    background: #FDEFF4;
+                    background: #F7F7F9;
                     border-radius: 4px;
                 }
                 #google-promos-list::-webkit-scrollbar-thumb:hover,
@@ -1809,7 +1812,7 @@
                 <div style="margin-bottom: 30px;">
                     <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;">
                         <span>Промокоды из amoCRM</span>
-                        <span style="font-size: 16px; background: #FDEFF4; color: #E6407A; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
+                        <span style="font-size: 16px; background: #F7F7F9; color: #E6407A; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
                     </h3>
                     <div id="amocrm-promos-list" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         ${renderAmoCRMPromosList()}
@@ -1818,9 +1821,9 @@
 
                 ${isAdminAuthorized ? renderPromoAnalyticsBlockHtml() : ''}
 
-                <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
+                <hr style="border: none; border-top: 1px solid #E7E7EC; margin: 30px 0;">
 
-                <div id="friends-stats-section" style="background: #FDEFF4; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
+                <div id="friends-stats-section" style="background: #F7F7F9; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
                     <h3 style="margin: 0 0 20px 0; font-size: 18px; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; gap: 10px;">
                          Промокоды от сотрудников
                         <button id="refresh-friends-stats-btn" style="
@@ -2126,7 +2129,7 @@
             tableHTML += `
                     </tbody>
                 </table>
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid #E6407A; text-align: center; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #E7E7EC; text-align: center; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     <span style="font-size: 14px; color: #6E6E7A;">Всего клиентов: </span>
                     <span style="font-size: 20px; font-weight: 600; color: #E6407A;">${stats.total}</span>
                 </div>
@@ -3414,8 +3417,8 @@
                 color: ${active ? 'white' : '#6E6E7A'};">${label}</button>`;
 
         return `
-            <hr style="border: none; border-top: 2px solid #E6407A; margin: 30px 0;">
-            <div id="promo-analytics-section" style="background: #FDEFF4; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
+            <hr style="border: none; border-top: 1px solid #E7E7EC; margin: 30px 0;">
+            <div id="promo-analytics-section" style="background: #F7F7F9; border-radius: 12px; padding: 20px; border: 1px solid #E7E7EC;">
                 <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #E6407A; font-family: ${AN_FONT}; display: flex; align-items: center; gap: 10px;">
                      Аналитика применения промокодов
                     <button id="refresh-promo-analytics-btn" style="padding: 5px 12px; background: #E6407A; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 12px; font-family: ${AN_FONT}; margin-left: auto;">Обновить</button>
