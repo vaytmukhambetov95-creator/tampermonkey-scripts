@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.2.1
+// @version      3.2.2
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.2.1';
+    const SCRIPT_VERSION = '3.2.2';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -4631,6 +4631,30 @@
         }
     }
 
+    // Разбор даты транзакции из таблицы: "07.09.2026, 12:57:42" (секунды необязательны).
+    // Штатный new Date() такой формат не понимает, поэтому разбираем вручную.
+    // Нераспознанная дата уходит в конец списка, а не всплывает наверх.
+    function parseTransactionDate(dateStr) {
+        if (!dateStr) return -Infinity;
+
+        const match = String(dateStr).match(/(\d{1,2})\.(\d{1,2})\.(\d{4}),?\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+        if (match) {
+            const parsed = new Date(
+                parseInt(match[3], 10),
+                parseInt(match[2], 10) - 1,
+                parseInt(match[1], 10),
+                parseInt(match[4], 10),
+                parseInt(match[5], 10),
+                match[6] ? parseInt(match[6], 10) : 0
+            );
+            if (!isNaN(parsed.getTime())) return parsed.getTime();
+        }
+
+        // Запасной вариант на случай ISO-строки
+        const fallback = new Date(dateStr);
+        return isNaN(fallback.getTime()) ? -Infinity : fallback.getTime();
+    }
+
     function renderAnalyticsTransactions() {
         if (!analyticsCache.transactions || analyticsCache.transactions.length === 0) {
             return `
@@ -4643,7 +4667,13 @@
 
         const domain = window.location.hostname;
 
-        return analyticsCache.transactions.map(transaction => {
+        // Новые события сверху: порядок строк в таблице хронологию не гарантирует,
+        // поэтому сортируем копию массива по фактической дате
+        const transactions = analyticsCache.transactions
+            .slice()
+            .sort((a, b) => parseTransactionDate(b.date) - parseTransactionDate(a.date));
+
+        return transactions.map(transaction => {
             const isAddition = transaction.type === 'начисление';
             const bgColor = isAddition ? '#EAF6F0' : '#ffebee';
             const textColor = isAddition ? '#237A4C' : '#B23B3B';
