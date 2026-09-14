@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.2.2
+// @version      3.2.3
 // @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -28,7 +28,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.2.2';
+    const SCRIPT_VERSION = '3.2.3';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -2885,17 +2885,24 @@
             const config = {
                 method: method,
                 url: webAppUrl + (method === 'GET' && data ? '?' + new URLSearchParams(data).toString() : ''),
+                timeout: 120000,
                 onload: function(response) {
-                    try {
-                        if (response.status === 200) {
-                            const result = JSON.parse(response.responseText);
-                            resolve(result);
-                        } else {
-                            reject(new Error(`HTTP ${response.status}`));
-                        }
-                    } catch (error) {
-                        reject(error);
+                    if (response.status !== 200) {
+                        reject(new Error(`HTTP ${response.status}`));
+                        return;
                     }
+                    const text = response.responseText || '';
+                    try {
+                        resolve(JSON.parse(text));
+                    } catch (error) {
+                        // Чаще всего сюда попадает оборванный или слишком большой ответ -
+                        // без длины и начала текста причину не отличить от сбоя сети
+                        console.error('Не разобран ответ Google Apps Script:', text.slice(0, 300));
+                        reject(new Error(`ответ не разобран (получено ${text.length} символов)`));
+                    }
+                },
+                ontimeout: function() {
+                    reject(new Error('Google Apps Script не ответил за 2 минуты'));
                 },
                 onerror: function(error) {
                     reject(new Error('Ошибка соединения с Google Apps Script'));
@@ -4160,6 +4167,17 @@
         }
     }
 
+    // Дата заявки приходит из таблицы ISO-строкой ("2026-09-11T11:22:25.000Z"),
+    // показывать её как есть нельзя - переводим в привычный вид
+    function formatRequestDate(value) {
+        const ts = parseTransactionDate(value);
+        if (!isFinite(ts)) return value || '';
+        return new Date(ts).toLocaleString('ru-RU', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+        });
+    }
+
     function renderBonusRequestsList() {
         if (bonusRequestsCache.length === 0) {
             return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
@@ -4169,7 +4187,13 @@
             </div>`;
         }
         
-        return bonusRequestsCache.map(request => {
+        // Новые заявки сверху: в Google Таблице строки идут в порядке добавления,
+        // поэтому свежие заявки оказывались в самом низу списка
+        const requests = bonusRequestsCache
+            .slice()
+            .sort((a, b) => parseTransactionDate(b.createdAt) - parseTransactionDate(a.createdAt));
+
+        return requests.map(request => {
             const statusColors = {
                 'ожидает': { bg: '#FCF4E8', text: '#856404' },
                 'одобрено': { bg: '#E6F4EC', text: '#1E6B44' },
@@ -4187,7 +4211,7 @@
                                 <span style="font-size: 20px; color: #E6407A; margin-left: 10px;">+${request.points}</span>
                             </div>
                             <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
-                                ${request.createdAt} • ${request.manager || 'Неизвестный менеджер'}
+                                ${formatRequestDate(request.createdAt)} • ${request.manager || 'Неизвестный менеджер'}
                             </div>
                         </div>
                         <div style="display: inline-block; padding: 5px 12px; background: ${statusStyle.bg}; color: ${statusStyle.text}; border-radius: 15px; font-size: 12px; font-weight: 600; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
@@ -4532,25 +4556,41 @@
             
             console.log('Ответ от сервера:', response);
             
-            if (response) {
-                if (response.debug) {
-                    console.log('Debug info:', response.debug);
-                }
-                if (response.debugDates) {
-                    console.log('Даты транзакций:', response.debugDates);
-                }
-                analyticsCache = response;
-                updateAnalyticsDisplay();
-                const transCount = response.transactions ? response.transactions.length : 0;
-                showNotification(`Аналитика загружена: ${transCount} транзакций`, 'success');
+            if (!response) {
+                showNotification('Аналитика: пустой ответ сервера', 'error');
+                return;
             }
+
+            // Google Apps Script отдаёт свои сбои как {error: "..."} с кодом 200,
+            // раньше такой ответ превращался в безымянную «Ошибку загрузки аналитики»
+            if (response.error) {
+                console.error('Бэкенд вернул ошибку:', response.error);
+                showNotification(`Аналитика: ${response.error}`, 'error');
+                return;
+            }
+
+            if (response.debug) {
+                console.log('Debug info:', response.debug);
+            }
+            analyticsCache = response;
+            updateAnalyticsDisplay();
+            const transCount = response.transactions ? response.transactions.length : 0;
+            showNotification(`Аналитика загружена: ${transCount} транзакций`, 'success');
         } catch (error) {
             console.error('Ошибка загрузки аналитики:', error);
-            showNotification('Ошибка загрузки аналитики', 'error');
+            const reason = error && error.message ? error.message : String(error);
+            showNotification(`Ошибка загрузки аналитики: ${reason}`, 'error');
         }
     }
 
     function updateAnalyticsDisplay() {
+        // Любое поле ответа может не прийти - тогда показываем 0,
+        // иначе падал весь блок аналитики целиком
+        const num = value => {
+            const parsed = typeof value === 'number' ? value : parseFloat(value);
+            return isFinite(parsed) ? parsed : 0;
+        };
+
         const addedDisplay = document.getElementById('total-added-display');
         const subtractedDisplay = document.getElementById('total-subtracted-display');
         const balanceDisplay = document.getElementById('total-balance-display');
@@ -4558,16 +4598,16 @@
         const subtractedRubDisplay = document.getElementById('total-subtracted-rub');
         const balanceRubDisplay = document.getElementById('total-balance-rub');
         
-        if (addedDisplay) addedDisplay.textContent = analyticsCache.totalAdded.toFixed(2);
-        if (subtractedDisplay) subtractedDisplay.textContent = analyticsCache.totalSubtracted.toFixed(2);
+        if (addedDisplay) addedDisplay.textContent = num(analyticsCache.totalAdded).toFixed(2);
+        if (subtractedDisplay) subtractedDisplay.textContent = num(analyticsCache.totalSubtracted).toFixed(2);
         if (balanceDisplay) {
-            const balance = analyticsCache.totalAdded - analyticsCache.totalSubtracted;
+            const balance = num(analyticsCache.totalAdded) - num(analyticsCache.totalSubtracted);
             balanceDisplay.textContent = balance.toFixed(2);
         }
-        if (addedRubDisplay) addedRubDisplay.textContent = `${analyticsCache.totalAddedRub.toFixed(2)} ₽`;
-        if (subtractedRubDisplay) subtractedRubDisplay.textContent = `${analyticsCache.totalSubtractedRub.toFixed(2)} ₽`;
+        if (addedRubDisplay) addedRubDisplay.textContent = `${num(analyticsCache.totalAddedRub).toFixed(2)} ₽`;
+        if (subtractedRubDisplay) subtractedRubDisplay.textContent = `${num(analyticsCache.totalSubtractedRub).toFixed(2)} ₽`;
         if (balanceRubDisplay) {
-            const balanceRub = analyticsCache.totalAddedRub - analyticsCache.totalSubtractedRub;
+            const balanceRub = num(analyticsCache.totalAddedRub) - num(analyticsCache.totalSubtractedRub);
             balanceRubDisplay.textContent = `${balanceRub.toFixed(2)} ₽`;
         }
         
@@ -4577,16 +4617,16 @@
         const adminOpsRubDisplay = document.getElementById('admin-operations-rub');
         
         if (f5AddedDisplay && analyticsCache.f5Added !== undefined) {
-            f5AddedDisplay.textContent = analyticsCache.f5Added.toFixed(2);
+            f5AddedDisplay.textContent = num(analyticsCache.f5Added).toFixed(2);
         }
         if (f5AddedRubDisplay && analyticsCache.f5AddedRub !== undefined) {
-            f5AddedRubDisplay.textContent = `${analyticsCache.f5AddedRub.toFixed(2)} ₽`;
+            f5AddedRubDisplay.textContent = `${num(analyticsCache.f5AddedRub).toFixed(2)} ₽`;
         }
         if (adminOpsDisplay && analyticsCache.adminOperations !== undefined) {
-            adminOpsDisplay.textContent = analyticsCache.adminOperations.toFixed(2);
+            adminOpsDisplay.textContent = num(analyticsCache.adminOperations).toFixed(2);
         }
         if (adminOpsRubDisplay && analyticsCache.adminOperationsRub !== undefined) {
-            adminOpsRubDisplay.textContent = `${analyticsCache.adminOperationsRub.toFixed(2)} ₽`;
+            adminOpsRubDisplay.textContent = `${num(analyticsCache.adminOperationsRub).toFixed(2)} ₽`;
         }
 
         const countF5Display = document.getElementById('count-f5');
@@ -4607,19 +4647,19 @@
         const countSubtractedDisplay = document.getElementById('count-subtracted');
         
         if (avgAddedDisplay && analyticsCache.avgAdded !== undefined) {
-            avgAddedDisplay.textContent = analyticsCache.avgAdded.toFixed(2);
+            avgAddedDisplay.textContent = num(analyticsCache.avgAdded).toFixed(2);
         }
         if (avgAddedRubDisplay && analyticsCache.avgAddedRub !== undefined) {
-            avgAddedRubDisplay.textContent = `${analyticsCache.avgAddedRub.toFixed(2)} ₽`;
+            avgAddedRubDisplay.textContent = `${num(analyticsCache.avgAddedRub).toFixed(2)} ₽`;
         }
         if (countAddedDisplay && analyticsCache.countAdded !== undefined) {
             countAddedDisplay.textContent = `Транзакций: ${analyticsCache.countAdded}`;
         }
         if (avgSubtractedDisplay && analyticsCache.avgSubtracted !== undefined) {
-            avgSubtractedDisplay.textContent = analyticsCache.avgSubtracted.toFixed(2);
+            avgSubtractedDisplay.textContent = num(analyticsCache.avgSubtracted).toFixed(2);
         }
         if (avgSubtractedRubDisplay && analyticsCache.avgSubtractedRub !== undefined) {
-            avgSubtractedRubDisplay.textContent = `${analyticsCache.avgSubtractedRub.toFixed(2)} ₽`;
+            avgSubtractedRubDisplay.textContent = `${num(analyticsCache.avgSubtractedRub).toFixed(2)} ₽`;
         }
         if (countSubtractedDisplay && analyticsCache.countSubtracted !== undefined) {
             countSubtractedDisplay.textContent = `Транзакций: ${analyticsCache.countSubtracted}`;
