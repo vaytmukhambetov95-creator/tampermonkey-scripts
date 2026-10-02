@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.3.0
+// @version      3.3.1
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -29,7 +29,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.3.0';
+    const SCRIPT_VERSION = '3.3.1';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -492,6 +492,23 @@
             #promo-codes-overlay .pcx-vx input.pcx-vx-lead { flex: 0 0 120px; }
             #promo-codes-overlay .pcx-vx input.pcx-vx-code-input {
                 font-size: 16px !important; font-weight: 700 !important; letter-spacing: 0.08em; text-transform: uppercase; }
+            /* Строка фильтров: список и поиск одной высоты. У списка своя стрелка вместо системной -
+               системная на macOS выглядела чужой и делала поле на 2px выше поиска. */
+            .pcx-vx-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+            #promo-codes-overlay .pcx-vx .pcx-vx-filters select,
+            #promo-codes-overlay .pcx-vx .pcx-vx-filters input { height: 38px; margin: 0; }
+            #promo-codes-overlay .pcx-vx .pcx-vx-filters input { flex: 1 1 220px; min-width: 0; }
+            #promo-codes-overlay .pcx-vx select {
+                -webkit-appearance: none; -moz-appearance: none; appearance: none;
+                flex: 0 0 180px; cursor: pointer; line-height: 18px;
+                padding: 0 34px 0 12px !important;
+                background: var(--pcx-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%239C9CA8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 12px center / 14px 14px !important;
+            }
+            /* Пустое состояние - белая карточка на серой подложке, как и остальное содержимое блока */
+            .pcx-vx-empty { padding: 22px 16px; text-align: center; background: var(--pcx-surface);
+                border: 1px solid var(--pcx-border); border-radius: 12px; }
+            .pcx-vx-empty__title { font-size: 13.5px; font-weight: 600; color: var(--pcx-text-2); }
+            .pcx-vx-empty__text { margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--pcx-text-3); }
 
             .pcx-vx-tablewrap { overflow-x: auto; background: var(--pcx-surface); border: 1px solid var(--pcx-border); border-radius: 12px; }
             .pcx-vx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -6067,11 +6084,11 @@
                     <button class="pcx-iconbtn" data-vx="refresh" title="Обновить">${ICONS.refresh}</button>
                 </div>
                 <div class="pcx-vx-stats" data-vx="stats"></div>
-                <div class="pcx-vx-row">
-                    <select data-vx="state" style="flex: 0 0 190px;">
-                        <option value="">Все</option>
+                <div class="pcx-vx-filters">
+                    <select data-vx="state">
+                        <option value="">Все состояния</option>
                         <option value="active">Действуют</option>
-                        <option value="exhausted">Израсходованы</option>
+                        <option value="exhausted">Остаток 0</option>
                         <option value="blocked">Заблокированы</option>
                     </select>
                     <input type="text" data-vx="q" placeholder="Поиск: номер, телефон, имя или № сделки">
@@ -6121,7 +6138,8 @@
                     `${s.period_issued_count || 0} шт.` + (isSub && s.period_topup_kop ? `, пополнено на ${formatKop(s.period_topup_kop)}` : '')),
                 vxStat('Потрачено за период', formatKop(s.period_spent_kop)),
                 vxStat('За всё время', formatKop((s.issued_kop || 0) + (s.topup_kop || 0)), `${s.count || 0} шт., потрачено ${formatKop(s.spent_kop)}`),
-                vxStat('Израсходованы / заблокированы', `${s.exhausted || 0} / ${s.blocked || 0}`)
+                vxStat('Не действуют', String((s.exhausted || 0) + (s.blocked || 0)),
+                    `${s.exhausted || 0} пустых, ${s.blocked || 0} в блоке`)
             ].join('');
         } catch (error) {
             box.innerHTML = vxNote('err', escHtml(error.message));
@@ -6144,7 +6162,14 @@
             if (seq !== vxListSeq) return; // уже пришёл более свежий запрос
             vxList = { items: more ? vxList.items.concat(res.items || []) : (res.items || []), total: res.total || 0 };
             if (!vxList.items.length) {
-                box.innerHTML = `<div class="pcx-vx-muted">${q || state ? 'Ничего не нашлось' : 'Пока ничего не выпущено'}</div>`;
+                const kindDef = vxKindDef(kindKey);
+                box.innerHTML = (q || state)
+                    ? `<div class="pcx-vx-empty"><div class="pcx-vx-empty__title">Ничего не нашлось</div>
+                        <div class="pcx-vx-empty__text">Попробуйте другой номер, телефон или уберите фильтр</div></div>`
+                    : `<div class="pcx-vx-empty"><div class="pcx-vx-empty__title">${kindDef.label}: пока ни одного</div>
+                        <div class="pcx-vx-empty__text">${canLoyalty('issue')
+                            ? 'Нажмите «Выпустить» - номер появится здесь'
+                            : 'Выпускает администратор, выпущенные появятся здесь'}</div></div>`;
                 return;
             }
             const kind = vxKindDef(kindKey);
