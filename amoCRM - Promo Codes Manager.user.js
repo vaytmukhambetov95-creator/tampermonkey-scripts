@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.2.3
-// @description  Управление промокодами и бонусными баллами в amoCRM с интеграцией Google Таблиц, аналитикой кэшбека, аналитикой применения промокодов, аналитикой замен по флористам и защитой паролем
+// @version      3.3.0
+// @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
 // @match        https://*.kommo.com/*
@@ -14,6 +14,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      script.google.com
+// @connect      myskladandamocrm.ru
 // @connect      *.amocrm.ru
 // @connect      *.kommo.com
 // @connect      *
@@ -28,7 +29,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.2.3';
+    const SCRIPT_VERSION = '3.3.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -435,6 +436,107 @@
             .pcx-toast--warning::before { background: #FFB454; }
             .pcx-toast--info::before { background: #6BA8FF; }
             @keyframes pcx-slide { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+
+            /* ---------- Подписки и сертификаты (pcx-vx) ---------- */
+            .pcx-vx { display: flex; flex-direction: column; gap: 16px; color: var(--pcx-text); }
+            .pcx-vx-block { background: var(--pcx-surface-2); border-radius: 14px; padding: 16px 18px; }
+            .pcx-vx-block > * + * { margin-top: 12px; }
+            .pcx-vx-block__title { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--pcx-text); }
+            .pcx-vx-subtitle { margin: 14px 0 8px; font-size: 13px; font-weight: 700; color: var(--pcx-text); }
+            .pcx-vx-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+            .pcx-vx-row > input { flex: 1 1 180px; min-width: 0; }
+            .pcx-vx-between { justify-content: space-between; }
+            .pcx-vx-muted { font-size: 12.5px; font-weight: 500; color: var(--pcx-text-3); line-height: 1.45; }
+            .pcx-vx-hint { margin-top: 6px; }
+            .pcx-vx-danger { color: var(--pcx-danger); }
+            .pcx-vx-nowrap { white-space: nowrap; }
+            .pcx-vx-note { padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 500; line-height: 1.45; }
+            .pcx-vx-note--info { background: var(--pcx-surface); border: 1px solid var(--pcx-border); color: var(--pcx-text-2); }
+            .pcx-vx-note--ok { background: #E6F4EC; color: #1E6B44; }
+            .pcx-vx-note--warn { background: #FCF4E8; color: #A85F0F; }
+            .pcx-vx-note--err { background: #FBECEC; color: #B23636; }
+
+            .pcx-vx-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+            #promo-codes-overlay .pcx-vx button.pcx-vx-pill {
+                height: 32px; padding: 0 12px; border: none; border-radius: 8px !important; background: transparent;
+                font-size: 13px !important; color: var(--pcx-text-2); cursor: pointer; }
+            #promo-codes-overlay .pcx-vx .pcx-vx-kinds button.pcx-vx-pill { height: 36px; padding: 0 14px; font-size: 13.5px !important; }
+            #promo-codes-overlay .pcx-vx button.pcx-vx-pill:hover { background: var(--pcx-surface-2); color: var(--pcx-text); }
+            #promo-codes-overlay .pcx-vx .pcx-vx-block button.pcx-vx-pill:hover { background: var(--pcx-surface); }
+            #promo-codes-overlay .pcx-vx button.pcx-vx-pill.is-active { background: var(--pcx-accent-soft); color: var(--pcx-accent); }
+
+            .pcx-vx-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+            .pcx-vx-stat { min-width: 0; padding: 12px 14px; background: var(--pcx-surface); border: 1px solid var(--pcx-border); border-radius: 12px; }
+            .pcx-vx-stat__label { font-size: 12px; font-weight: 600; color: var(--pcx-text-3); }
+            .pcx-vx-stat__value { margin-top: 4px; font-size: 19px; font-weight: 700; letter-spacing: -0.02em; color: var(--pcx-text); white-space: nowrap; }
+            .pcx-vx-stat__value--accent { color: var(--pcx-accent); }
+            .pcx-vx-stat__value--ok { color: var(--pcx-ok); }
+            .pcx-vx-stat__sub { margin-top: 2px; font-size: 12px; font-weight: 500; color: var(--pcx-text-2); }
+
+            .pcx-vx-card { padding: 16px 18px; background: var(--pcx-surface); border: 1px solid var(--pcx-border); border-radius: 12px; }
+            .pcx-vx-card > * + * { margin-top: 14px; }
+            .pcx-vx-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+            .pcx-vx-card__code { font-size: 22px; font-weight: 800; letter-spacing: 0.06em; color: var(--pcx-text); }
+            .pcx-vx-card .pcx-vx-stat { background: var(--pcx-surface-2); border-color: transparent; }
+            .pcx-vx-kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-left: 0; margin-right: 0; margin-bottom: 0; font-size: 13px; }
+            .pcx-vx-modal .pcx-vx-card { padding: 0; border: none; }
+            .pcx-vx-kv dt { color: var(--pcx-text-3); font-weight: 600; }
+            .pcx-vx-kv dd { margin: 0; color: var(--pcx-text); font-weight: 500; word-break: break-word; }
+            .pcx-vx-kv a, .pcx-vx-table a { color: var(--pcx-accent); font-weight: 600; text-decoration: none; }
+            .pcx-vx-kv a:hover, .pcx-vx-table a:hover { text-decoration: underline; }
+            .pcx-vx-action { padding: 12px 14px; background: var(--pcx-surface-2); border-radius: 12px; }
+            .pcx-vx-action > * + * { margin-top: 10px; }
+            .pcx-vx-action__title { font-size: 13.5px; font-weight: 700; color: var(--pcx-text); }
+            #promo-codes-overlay .pcx-vx input.pcx-vx-amount { flex: 0 0 140px; }
+            #promo-codes-overlay .pcx-vx input.pcx-vx-lead { flex: 0 0 120px; }
+            #promo-codes-overlay .pcx-vx input.pcx-vx-code-input {
+                font-size: 16px !important; font-weight: 700 !important; letter-spacing: 0.08em; text-transform: uppercase; }
+
+            .pcx-vx-tablewrap { overflow-x: auto; background: var(--pcx-surface); border: 1px solid var(--pcx-border); border-radius: 12px; }
+            .pcx-vx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            .pcx-vx-table th { padding: 9px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--pcx-text-3);
+                border-bottom: 1px solid var(--pcx-border); white-space: nowrap; }
+            .pcx-vx-table td { padding: 9px 12px; border-bottom: 1px solid var(--pcx-border); vertical-align: top;
+                color: var(--pcx-text); font-weight: 500; }
+            .pcx-vx-table tbody tr:last-child td { border-bottom: none; }
+            .pcx-vx-table tr.is-click { cursor: pointer; }
+            .pcx-vx-table tr.is-click:hover td { background: var(--pcx-surface-2); }
+            .pcx-vx-num { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+            .pcx-vx-plus { color: var(--pcx-ok) !important; }
+            .pcx-vx-code { font-weight: 700; letter-spacing: 0.04em; white-space: nowrap; }
+            .pcx-vx-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
+                font-size: 12px; font-weight: 600; white-space: nowrap; }
+            .pcx-vx-badge--active { background: #E6F4EC; color: #1E6B44; }
+            .pcx-vx-badge--exhausted { background: #EEEEF2; color: var(--pcx-text-2); }
+            .pcx-vx-badge--blocked { background: #FBECEC; color: #B23636; }
+
+            .pcx-vx-minilist { display: flex; flex-direction: column; gap: 6px; }
+            #promo-codes-overlay .pcx-vx button.pcx-vx-mini {
+                display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; height: auto;
+                padding: 10px 12px; background: var(--pcx-surface); border: 1px solid var(--pcx-border); color: var(--pcx-text);
+                text-align: left; font-size: 13px !important; font-weight: 500 !important; cursor: pointer; }
+            .pcx-vx-mini b { margin-left: 8px; font-weight: 700; }
+            #promo-codes-overlay .pcx-vx button.pcx-vx-more { width: 100%; margin-top: 10px; }
+            .pcx-btn--danger { background: var(--pcx-surface); border-color: var(--pcx-border); color: var(--pcx-danger); }
+
+            .pcx-vx-modal-overlay { position: fixed; inset: 0; z-index: 10002; display: flex; align-items: center; justify-content: center;
+                background: rgba(18, 18, 26, 0.45); }
+            .pcx-vx-modal { position: relative; width: min(760px, 94vw); max-height: 88vh; overflow-y: auto; padding: 22px 24px 24px;
+                background: var(--pcx-surface); border-radius: 16px; box-shadow: 0 30px 80px rgba(16, 16, 28, 0.3); }
+            .pcx-vx-modal__close { position: absolute; top: 14px; right: 14px; }
+            .pcx-vx-modal__title { margin: 0 40px 0 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--pcx-text); }
+            .pcx-vx-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+            .pcx-vx-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+            .pcx-vx-field--wide { grid-column: 1 / -1; }
+            #promo-codes-overlay .pcx-vx-field label { font-size: 12.5px; font-weight: 600 !important; color: var(--pcx-text-2); }
+            .pcx-vx-field input, .pcx-vx-field textarea, .pcx-vx-field select { width: 100%; }
+            .pcx-vx-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+            .pcx-vx-codebig { padding: 18px; border-radius: 12px; background: var(--pcx-surface-2); text-align: center;
+                font-size: 28px; font-weight: 800; letter-spacing: 0.08em; color: var(--pcx-text); }
+            @media (max-width: 640px) {
+                .pcx-vx-form, .pcx-vx-kv { grid-template-columns: 1fr; }
+            }
         `;
         document.head.appendChild(style);
     }
@@ -550,6 +652,7 @@
         { key: 'check', label: 'Проверка' },
         { key: 'list', label: 'Промокоды' },
         { key: 'bonus', label: 'Бонусы' },
+        { key: 'vouchers', label: 'Подписки и сертификаты' },
         { key: 'add', label: 'Добавить промокод' },
         { key: 'analytics', label: 'Аналитика' },
         { key: 'settings', label: 'Настройки' }
@@ -616,6 +719,8 @@
             renderListTab(content);
         } else if (tabName === 'bonus') {
             renderBonusTab(content);
+        } else if (tabName === 'vouchers') {
+            renderVouchersTab(content);
         } else if (tabName === 'analytics') {
             renderAnalyticsTab(content);
         } else if (tabName === 'settings') {
@@ -2326,7 +2431,11 @@
                     </div>
                     <div style="margin-top: 15px; font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
                 </div>
-                
+
+                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
+
+                <div id="loyalty-settings-box"></div>
+
                 <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
                 
                 <div style="background: ${isAdminAuthorized ? '#E6F4EC' : '#FCF4E8'}; padding: 20px; border-radius: 14px;">
@@ -2424,6 +2533,7 @@
         }
 
         updateStatistics();
+        renderLoyaltySettings(document.getElementById('loyalty-settings-box'));
     }
 
     function showAdminPasswordModal() {
@@ -5125,6 +5235,1009 @@
         } catch (error) {
             console.error('Ошибка логирования транзакции:', error);
         }
+    }
+
+    // ===================== Подписки и сертификаты =====================
+    // Бэкенд - сервис лояльности на Go (папка loyalty-service, сервер int109), а не GAS.
+    // Права задаёт токен из «Настроек»: менеджер проверяет и списывает, администратор ещё
+    // выпускает, возвращает, пополняет и блокирует. Сервер проверяет права сам, поэтому
+    // скрытие кнопок по роли здесь - только удобство. Токен лежит в хранилище Tampermonkey,
+    // а не в localStorage страницы amoCRM.
+
+    const LOYALTY_DEFAULT_URL = 'https://myskladandamocrm.ru/loyalty';
+    const LOYALTY_URL_KEY = 'loyalty_api_url';
+    const LOYALTY_TOKEN_KEY = 'loyalty_api_token';
+    const VOUCHER_KINDS = [
+        { key: 'certificate', label: 'Сертификаты', title: 'Сертификат', issueTitle: 'Новый сертификат', nominal: 'Номинал' },
+        { key: 'flower_subscription', label: 'Цветочные подписки', title: 'Цветочная подписка', issueTitle: 'Новая цветочная подписка', nominal: 'Внесено' },
+        { key: 'wedding_subscription', label: 'Свадебные подписки', title: 'Свадебная подписка', issueTitle: 'Новая свадебная подписка', nominal: 'Внесено' }
+    ];
+    const VOUCHER_OPS = { issue: 'Выпуск', topup: 'Пополнение', redeem: 'Списание', refund: 'Возврат', block: 'Блокировка', unblock: 'Разблокировка' };
+    const VOUCHER_SOURCES = { amo: 'amoCRM', site: 'сайт', paykeeper: 'PayKeeper', api: 'API' };
+    const LOYALTY_ROLES = { admin: 'администратор', manager: 'менеджер', server: 'сервер сайта' };
+    const VX_PERIODS = [
+        { key: 'week', label: 'Неделя', days: 7 },
+        { key: 'month', label: 'Месяц', days: 30 },
+        { key: 'year', label: 'Год', days: 365 },
+        { key: 'all', label: 'Всё время', days: 0 }
+    ];
+
+    let loyaltyMe = null;        // ответ /api/v1/me: роль и права текущего токена
+    let vxSubtab = 'certificate';
+    let vxPeriod = 'month';
+    let vxLeadCtxCache = null;   // телефон, имя, бюджет и промокод открытой сделки
+    let vxList = { items: [], total: 0 };
+    let vxListSeq = 0;
+
+    // ---------- связь с сервисом ----------
+
+    async function getLoyaltySettings() {
+        const url = (await GM.getValue(LOYALTY_URL_KEY, '')) || LOYALTY_DEFAULT_URL;
+        const token = await GM.getValue(LOYALTY_TOKEN_KEY, '');
+        return { url: String(url).replace(/\/+$/, ''), token: String(token || '').trim() };
+    }
+
+    async function loyaltyRequest(method, path, body) {
+        const { url, token } = await getLoyaltySettings();
+        if (!token) {
+            throw new Error('Не задан токен доступа - укажите его во вкладке «Настройки»');
+        }
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method,
+                url: url + path,
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                data: body ? JSON.stringify(body) : undefined,
+                timeout: 20000,
+                onload: (res) => {
+                    let data = null;
+                    try {
+                        data = JSON.parse(res.responseText || 'null');
+                    } catch (e) { /* не JSON - ниже будет общая ошибка */ }
+                    if (res.status >= 200 && res.status < 300 && data) {
+                        resolve(data);
+                        return;
+                    }
+                    const apiErr = data && data.error;
+                    const err = new Error((apiErr && apiErr.message) || `Сервис сертификатов ответил ошибкой ${res.status}`);
+                    err.status = res.status;
+                    err.code = apiErr && apiErr.code;
+                    err.details = apiErr || null;
+                    reject(err);
+                },
+                onerror: () => reject(new Error('Нет связи с сервисом сертификатов')),
+                ontimeout: () => reject(new Error('Сервис сертификатов не ответил за 20 секунд'))
+            });
+        });
+    }
+
+    async function loadLoyaltyMe(force) {
+        if (loyaltyMe && !force) return loyaltyMe;
+        loyaltyMe = await loyaltyRequest('GET', '/api/v1/me');
+        return loyaltyMe;
+    }
+
+    function canLoyalty(perm) {
+        return !!(loyaltyMe && Array.isArray(loyaltyMe.perms) && loyaltyMe.perms.includes(perm));
+    }
+
+    // ---------- мелочи ----------
+
+    function escHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function rubToKop(value) {
+        const n = parseFloat(String(value == null ? '' : value).replace(/[\s ]/g, '').replace(',', '.'));
+        return isFinite(n) ? Math.round(n * 100) : NaN;
+    }
+
+    function formatKop(kop) {
+        const rub = (kop || 0) / 100;
+        const hasKop = Math.round(Math.abs(kop || 0)) % 100 !== 0;
+        return rub.toLocaleString('ru-RU', { minimumFractionDigits: hasKop ? 2 : 0, maximumFractionDigits: 2 }) + ' ₽';
+    }
+
+    function vxPhone(phone) {
+        const d = String(phone || '').replace(/\D/g, '');
+        if (d.length === 11 && d[0] === '7') return `+7 ${d.slice(1, 4)} ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}`;
+        return phone || '';
+    }
+
+    function vxPlural(n, one, few, many) {
+        const a = Math.abs(n) % 100, b = a % 10;
+        if (a > 10 && a < 20) return `${n} ${many}`;
+        if (b === 1) return `${n} ${one}`;
+        if (b >= 2 && b <= 4) return `${n} ${few}`;
+        return `${n} ${many}`;
+    }
+
+    function vxDate(iso, withTime) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return escHtml(iso);
+        return withTime ? formatDateTime(d) : d.toLocaleDateString('ru-RU');
+    }
+
+    function vxKindDef(key) {
+        return VOUCHER_KINDS.find(k => k.key === key) || VOUCHER_KINDS[0];
+    }
+
+    function vxUuid() {
+        if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+        return Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    function getCurrentLeadId() {
+        const m = window.location.href.match(/\/leads\/detail\/(\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+    }
+
+    function getCurrentManagerName() {
+        return (document.querySelector('.user-link__name')?.textContent || '').trim() || 'Менеджер';
+    }
+
+    function vxLeadLink(id) {
+        if (!id) return '';
+        return `<a href="https://${window.location.hostname}/leads/detail/${id}" target="_blank" rel="noopener">№${id}</a>`;
+    }
+
+    function vxNote(type, html) {
+        return `<div class="pcx-vx-note pcx-vx-note--${type}">${html}</div>`;
+    }
+
+    function vxStat(label, value, sub, tone) {
+        return `
+            <div class="pcx-vx-stat">
+                <div class="pcx-vx-stat__label">${label}</div>
+                <div class="pcx-vx-stat__value${tone ? ' pcx-vx-stat__value--' + tone : ''}">${value}</div>
+                ${sub ? `<div class="pcx-vx-stat__sub">${sub}</div>` : ''}
+            </div>`;
+    }
+
+    // Подписи без рода: «сертификат» мужского рода, «подписка» - женского.
+    function vxBadge(v) {
+        let label = { active: 'Действует', exhausted: 'Остаток 0', blocked: 'Блокировка' }[v.state] || v.state;
+        if (v.state === 'exhausted' && !v.spent_kop) label = 'Без баланса';
+        return `<span class="pcx-vx-badge pcx-vx-badge--${escHtml(v.state)}">${label}</span>`;
+    }
+
+    async function vxCopy(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position: fixed; opacity: 0;';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+        }
+        showNotification('Скопировано', 'success');
+    }
+
+    // Текст для клиента после выпуска - менеджер вставляет его в переписку.
+    function vxClientText(v) {
+        const lines = [];
+        if (v.kind === 'certificate') {
+            lines.push(`Подарочный сертификат на ${formatKop(v.nominal_kop)}`);
+            lines.push(`Номер: ${v.code}`);
+            lines.push('Сертификат бессрочный, его можно тратить частями - остаток не сгорает.');
+        } else {
+            lines.push(v.kind_title);
+            lines.push(`Номер: ${v.code}`);
+            if (v.balance_kop) lines.push(`Баланс: ${formatKop(v.balance_kop)}`);
+        }
+        lines.push('При заказе назовите этот номер менеджеру.');
+        return lines.join('\n');
+    }
+
+    // Данные открытой сделки: бюджет, промокод, контакт. Телефон и имя сначала из карточки,
+    // если их там нет - через API amoCRM.
+    async function getVxLeadContext(force) {
+        const leadId = getCurrentLeadId();
+        if (!leadId) return { leadId: 0, budget: 0, phone: '', contactName: '', contactId: 0, promoCode: '' };
+        if (!force && vxLeadCtxCache && vxLeadCtxCache.leadId === leadId) return vxLeadCtxCache;
+
+        const fn = document.querySelector('input[name="contact[FN]"]')?.value || '';
+        const ln = document.querySelector('input[name="contact[LN]"]')?.value || '';
+        const ctx = {
+            leadId,
+            budget: getLeadBudget(),
+            phone: getContactPhoneFromPage() || '',
+            contactName: `${fn} ${ln}`.trim(),
+            contactId: 0,
+            promoCode: ''
+        };
+        try {
+            const base = `${window.location.origin}/api/v4`;
+            const res = await fetch(`${base}/leads/${leadId}?with=contacts`, { headers: { 'Content-Type': 'application/json' } });
+            if (res.ok) {
+                const lead = await res.json();
+                if (!ctx.budget && lead.price) ctx.budget = lead.price;
+                const promo = (lead.custom_fields_values || []).find(f => f.field_id === PROMO_FIELD_ID);
+                if (promo && promo.values && promo.values[0]) ctx.promoCode = String(promo.values[0].value || '').trim();
+                const contacts = (lead._embedded && lead._embedded.contacts) || [];
+                const main = contacts.find(c => c.is_main) || contacts[0];
+                if (main) {
+                    ctx.contactId = main.id;
+                    if (!ctx.phone || !ctx.contactName) {
+                        const cr = await fetch(`${base}/contacts/${main.id}`, { headers: { 'Content-Type': 'application/json' } });
+                        if (cr.ok) {
+                            const contact = await cr.json();
+                            if (!ctx.contactName) ctx.contactName = contact.name || '';
+                            const phoneField = (contact.custom_fields_values || []).find(f => f.field_code === 'PHONE');
+                            if (!ctx.phone && phoneField && phoneField.values && phoneField.values[0]) {
+                                ctx.phone = String(phoneField.values[0].value || '');
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('[Сертификаты] Не удалось получить данные сделки:', error);
+        }
+        vxLeadCtxCache = ctx;
+        return ctx;
+    }
+
+    // ---------- вкладка ----------
+
+    async function renderVouchersTab(container) {
+        container.innerHTML = `<div class="pcx-vx">${vxNote('info', 'Подключаюсь к сервису сертификатов...')}</div>`;
+        try {
+            await loadLoyaltyMe(true);
+        } catch (error) {
+            container.innerHTML = `
+                <div class="pcx-vx"><section class="pcx-vx-block">
+                    <h3 class="pcx-vx-block__title">Подписки и сертификаты</h3>
+                    ${vxNote(error.status ? 'err' : 'warn', escHtml(error.message))}
+                    <div class="pcx-vx-muted">Токен доступа выдаёт администратор. Вставьте его во вкладке «Настройки», в блоке «Подписки и сертификаты».</div>
+                    <button class="pcx-btn pcx-btn--primary" data-vx="to-settings">Открыть настройки</button>
+                </section></div>`;
+            container.querySelector('[data-vx="to-settings"]').onclick = () => switchTab('settings');
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="pcx-vx">
+                <section class="pcx-vx-block">
+                    <h3 class="pcx-vx-block__title">Проверка по номеру</h3>
+                    <div class="pcx-vx-row">
+                        <input type="text" id="vx-code-input" class="pcx-vx-code-input" placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+                        <button id="vx-find-btn" class="pcx-btn pcx-btn--primary">Найти</button>
+                    </div>
+                    <div id="vx-find-result"></div>
+                </section>
+
+                <section class="pcx-vx-block">
+                    <h3 class="pcx-vx-block__title">В этой сделке</h3>
+                    <div id="vx-lead-content"><div class="pcx-vx-muted">Загружаю...</div></div>
+                </section>
+
+                <div class="pcx-vx-pills pcx-vx-kinds" id="vx-kinds">
+                    ${VOUCHER_KINDS.map(k => `<button class="pcx-vx-pill${k.key === vxSubtab ? ' is-active' : ''}" data-kind="${k.key}">${k.label}</button>`).join('')}
+                </div>
+                <div id="vx-kind-panel"></div>
+            </div>`;
+
+        const codeInput = document.getElementById('vx-code-input');
+        document.getElementById('vx-find-btn').onclick = () => vxFind(codeInput.value);
+        codeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') vxFind(codeInput.value);
+        });
+        document.querySelectorAll('#vx-kinds [data-kind]').forEach(btn => {
+            btn.onclick = () => {
+                vxSubtab = btn.dataset.kind;
+                document.querySelectorAll('#vx-kinds [data-kind]').forEach(b => b.classList.toggle('is-active', b === btn));
+                renderVxKindPanel();
+            };
+        });
+
+        renderVxLeadBlock();
+        renderVxKindPanel();
+    }
+
+    async function vxFind(raw) {
+        const out = document.getElementById('vx-find-result');
+        if (!out) return;
+        const code = String(raw || '').trim();
+        if (!code) {
+            document.getElementById('vx-code-input')?.focus();
+            return;
+        }
+        out.innerHTML = '<div class="pcx-vx-muted">Ищу...</div>';
+        try {
+            const data = await loyaltyRequest('GET', '/api/v1/vouchers/' + encodeURIComponent(code));
+            out.dataset.code = data.voucher.code;
+            renderVoucherCard(out, data, vxRefreshAll);
+        } catch (error) {
+            delete out.dataset.code;
+            out.innerHTML = vxNote(error.code === 'not_found' || error.code === 'bad_code' ? 'warn' : 'err', escHtml(error.message));
+        }
+    }
+
+    // После любой операции обновляем всё, что могло измениться.
+    function vxRefreshAll() {
+        renderVxLeadBlock();
+        const panel = document.getElementById('vx-kind-panel');
+        if (panel && panel.firstElementChild) {
+            loadVxStats(panel);
+            loadVxList(panel, false);
+        }
+        const found = document.getElementById('vx-find-result');
+        if (found && found.dataset.code) vxFind(found.dataset.code);
+    }
+
+    function vxBindOpen(root) {
+        root.querySelectorAll('[data-vx-open]').forEach(el => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('a[target="_blank"]')) return; // ссылка на сделку открывается сама
+                e.preventDefault();
+                openVoucherModal(el.dataset.vxOpen);
+            });
+        });
+    }
+
+    async function renderVxLeadBlock() {
+        const box = document.getElementById('vx-lead-content');
+        if (!box) return;
+        const leadId = getCurrentLeadId();
+        if (!leadId) {
+            box.innerHTML = '<div class="pcx-vx-muted">Откройте сделку, чтобы видеть её списания и сертификаты клиента</div>';
+            return;
+        }
+        const ctx = await getVxLeadContext();
+        const [opsRes, clientRes] = await Promise.all([
+            loyaltyRequest('GET', `/api/v1/operations?lead_id=${leadId}&limit=100`).catch(error => ({ error })),
+            ctx.phone
+                ? loyaltyRequest('GET', '/api/v1/vouchers?limit=20&phone=' + encodeURIComponent(ctx.phone)).catch(error => ({ error }))
+                : Promise.resolve({ items: [] })
+        ]);
+        if (opsRes.error) {
+            box.innerHTML = vxNote('err', escHtml(opsRes.error.message));
+            return;
+        }
+
+        const parts = [];
+        if (ctx.promoCode) {
+            parts.push(vxNote('warn', `В сделке указан промокод «${escHtml(ctx.promoCode)}». Сертификаты и подписки с промокодом не совмещаются.`));
+        }
+        const ops = opsRes.items || [];
+        const spent = ops.reduce((sum, o) => sum + (o.type === 'redeem' || o.type === 'refund' ? -o.amount_kop : 0), 0);
+        ctx.leadPaidKop = spent; // карточка учитывает это в подсказке «к оплате по сделке»
+        if (ops.length) {
+            parts.push(`<div class="pcx-vx-subtitle">Операции по сделке${spent ? ' - списано ' + formatKop(spent) : ''}</div>${vxOpsTable(ops, true)}`);
+        }
+        const clientItems = (clientRes && clientRes.items) || [];
+        if (clientItems.length) {
+            parts.push(`<div class="pcx-vx-subtitle">У клиента ${escHtml(vxPhone(ctx.phone))}</div>
+                <div class="pcx-vx-minilist">${clientItems.map(v => `
+                    <button class="pcx-vx-mini" data-vx-open="${escHtml(v.code)}">
+                        <span><span class="pcx-vx-code">${escHtml(v.code)}</span> <span class="pcx-vx-muted">${escHtml(v.kind_title)}</span></span>
+                        <span>${vxBadge(v)}<b>${formatKop(v.balance_kop)}</b></span>
+                    </button>`).join('')}
+                </div>`);
+        } else if (clientRes && clientRes.error) {
+            parts.push(vxNote('err', escHtml(clientRes.error.message)));
+        }
+        if (!ops.length && !clientItems.length) {
+            parts.push(`<div class="pcx-vx-muted">По этой сделке операций не было${ctx.phone ? ', у клиента нет сертификатов и подписок' : ''}.</div>`);
+        }
+        box.innerHTML = parts.join('');
+        vxBindOpen(box);
+    }
+
+    function vxOpsTable(ops, showCode) {
+        return `
+            <div class="pcx-vx-tablewrap"><table class="pcx-vx-table">
+                <thead><tr>
+                    <th>Дата</th>${showCode ? '<th>Номер</th>' : ''}<th>Операция</th>
+                    <th class="pcx-vx-num">Сумма</th><th class="pcx-vx-num">Остаток</th><th>Сделка</th><th>Кто</th>
+                </tr></thead>
+                <tbody>${ops.map(o => `
+                    <tr>
+                        <td class="pcx-vx-nowrap">${vxDate(o.created_at, true)}</td>
+                        ${showCode ? `<td><a href="#" class="pcx-vx-code" data-vx-open="${escHtml(o.code)}">${escHtml(o.code)}</a></td>` : ''}
+                        <td>${VOUCHER_OPS[o.type] || escHtml(o.type)}${o.comment ? `<div class="pcx-vx-muted">${escHtml(o.comment)}</div>` : ''}</td>
+                        <td class="pcx-vx-num${o.amount_kop > 0 ? ' pcx-vx-plus' : ''}">${o.amount_kop ? (o.amount_kop > 0 ? '+' : '-') + formatKop(Math.abs(o.amount_kop)) : ''}</td>
+                        <td class="pcx-vx-num">${formatKop(o.balance_after_kop)}</td>
+                        <td>${o.lead_id ? vxLeadLink(o.lead_id) : escHtml(o.order_ref || '')}</td>
+                        <td>${escHtml(o.actor || '')}<div class="pcx-vx-muted">${VOUCHER_SOURCES[o.source] || escHtml(o.source || '')}</div></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table></div>`;
+    }
+
+    // ---------- карточка носителя ----------
+
+    function renderVoucherCard(container, data, onChange) {
+        const v = data.voucher;
+        const opsDesc = (data.operations || []).slice().reverse();
+        const meta = v.meta || {};
+        const leadId = getCurrentLeadId();
+        const ctx = (vxLeadCtxCache && vxLeadCtxCache.leadId === leadId) ? vxLeadCtxCache : { budget: getLeadBudget(), promoCode: '' };
+        const budgetKop = Math.round((ctx.budget || 0) * 100);
+        const canRedeemHere = canLoyalty('redeem') && v.state === 'active' && leadId > 0;
+        // Сколько в этой сделке уже оплачено сертификатами и подписками: этим носителем
+        // (свежие данные карточки) или всеми сразу (сводка блока «В этой сделке»).
+        let paidHereKop = 0;
+        opsDesc.forEach(o => {
+            if (o.lead_id === leadId && (o.type === 'redeem' || o.type === 'refund')) paidHereKop -= o.amount_kop;
+        });
+        paidHereKop = Math.max(paidHereKop, ctx.leadPaidKop || 0);
+        const dueKop = Math.max(0, budgetKop - paidHereKop);
+        const defaultKop = dueKop > 0 ? Math.min(dueKop, v.balance_kop) : 0;
+
+        const rows = [];
+        const addRow = (label, value) => {
+            if (value) rows.push(`<dt>${label}</dt><dd>${value}</dd>`);
+        };
+        addRow('Покупатель', [escHtml(v.buyer_name), escHtml(vxPhone(v.buyer_phone))].filter(Boolean).join(', '));
+        addRow(v.kind === 'wedding_subscription' ? 'Пара' : 'Получатель', escHtml(v.recipient_name));
+        addRow('Пожелание', escHtml(v.message));
+        addRow('График доставок', escHtml(meta.schedule || ''));
+        addRow('Дата свадьбы', meta.wedding_date ? vxDate(meta.wedding_date) : '');
+        addRow('Выпущен', [vxDate(v.created_at, true), escHtml(v.created_by), v.lead_id ? 'сделка ' + vxLeadLink(v.lead_id) : ''].filter(Boolean).join(', '));
+        addRow('Последнее списание', v.last_used_at ? vxDate(v.last_used_at, true) : '');
+        addRow('Комментарий', escHtml(v.comment));
+
+        const adminBtns = [];
+        if (canLoyalty('refund') && v.spent_kop > 0) {
+            adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="refund">Вернуть на баланс</button>');
+        }
+        if (canLoyalty('topup') && v.kind !== 'certificate' && v.status !== 'blocked') {
+            adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="topup">Пополнить</button>');
+        }
+        if (canLoyalty('block')) {
+            adminBtns.push(v.status === 'blocked'
+                ? '<button class="pcx-btn pcx-btn--ghost" data-vx-admin="unblock">Разблокировать</button>'
+                : '<button class="pcx-btn pcx-btn--danger" data-vx-admin="block">Заблокировать</button>');
+        }
+
+        container.innerHTML = `
+            <div class="pcx-vx-card">
+                <div class="pcx-vx-card__head">
+                    <div>
+                        <div class="pcx-vx-muted">${escHtml(v.kind_title)}</div>
+                        <div class="pcx-vx-card__code">${escHtml(v.code)}</div>
+                    </div>
+                    ${vxBadge(v)}
+                </div>
+                <div class="pcx-vx-stats">
+                    ${vxStat('Остаток', formatKop(v.balance_kop), '', v.state === 'active' ? 'ok' : '')}
+                    ${vxStat(v.kind === 'certificate' ? 'Номинал' : 'Начальный взнос', formatKop(v.nominal_kop), v.topup_kop ? 'пополнено на ' + formatKop(v.topup_kop) : '')}
+                    ${vxStat('Потрачено', formatKop(v.spent_kop), v.uses ? vxPlural(v.uses, 'списание', 'списания', 'списаний') : '')}
+                </div>
+                <dl class="pcx-vx-kv">${rows.join('')}</dl>
+                ${canRedeemHere ? `
+                    <div class="pcx-vx-action">
+                        <div class="pcx-vx-action__title">Списать в этой сделке №${leadId}</div>
+                        ${ctx.promoCode ? vxNote('warn', `В сделке указан промокод «${escHtml(ctx.promoCode)}» - с ним списывать нельзя.`) : ''}
+                        <div class="pcx-vx-row">
+                            <input type="text" inputmode="decimal" class="pcx-vx-amount" data-vx="amount" placeholder="Сумма, ₽" value="${defaultKop ? defaultKop / 100 : ''}">
+                            <input type="text" data-vx="comment" placeholder="Комментарий (необязательно)">
+                            <button class="pcx-btn pcx-btn--primary" data-vx="redeem">Списать</button>
+                        </div>
+                        <div class="pcx-vx-muted" data-vx="hint"></div>
+                        <div class="pcx-vx-muted">Сертификаты и подписки не совмещаются с бонусными баллами и промокодами.</div>
+                    </div>` : ''}
+                ${!leadId && v.state === 'active' && canLoyalty('redeem') ? vxNote('info', 'Списывать можно только из карточки сделки') : ''}
+                ${adminBtns.length ? `<div class="pcx-vx-row">${adminBtns.join('')}</div>` : ''}
+                <div data-vx="admin-form"></div>
+                <div>
+                    <div class="pcx-vx-subtitle">История операций</div>
+                    ${opsDesc.length ? vxOpsTable(opsDesc, false) : '<div class="pcx-vx-muted">Операций нет</div>'}
+                </div>
+            </div>`;
+
+        if (canRedeemHere) {
+            const amountInput = container.querySelector('[data-vx="amount"]');
+            const commentInput = container.querySelector('[data-vx="comment"]');
+            const hint = container.querySelector('[data-vx="hint"]');
+            const redeemBtn = container.querySelector('[data-vx="redeem"]');
+            // Один ключ на одну попытку: двойной клик и повтор после обрыва связи не спишут дважды.
+            let redeemKey = 'amo:redeem:' + vxUuid();
+
+            const paidNote = paidHereKop > 0 ? `В этой сделке уже оплачено сертификатами и подписками: ${formatKop(paidHereKop)}. ` : '';
+            const updateHint = () => {
+                const kop = rubToKop(amountInput.value);
+                if (!kop || kop <= 0) {
+                    hint.textContent = paidNote + `Доступно ${formatKop(v.balance_kop)}` +
+                        (budgetKop ? `, к оплате по сделке ${formatKop(dueKop)}` : '');
+                    return;
+                }
+                if (kop > v.balance_kop) {
+                    hint.innerHTML = `<span class="pcx-vx-danger">Больше остатка - списать можно не больше ${formatKop(v.balance_kop)}</span>`;
+                    return;
+                }
+                let text = paidNote + `Останется ${formatKop(v.balance_kop - kop)}`;
+                if (budgetKop && dueKop > kop) text += `. Доплата клиента: ${formatKop(dueKop - kop)}`;
+                if (budgetKop && kop > dueKop) text += `. Это больше, чем осталось оплатить по сделке (${formatKop(dueKop)})`;
+                hint.textContent = text;
+            };
+            amountInput.addEventListener('input', updateHint);
+            updateHint();
+
+            redeemBtn.onclick = async () => {
+                const kop = rubToKop(amountInput.value);
+                if (!kop || kop <= 0) {
+                    showNotification('Укажите сумму списания', 'warning');
+                    amountInput.focus();
+                    return;
+                }
+                if (kop > v.balance_kop) {
+                    showNotification(`Списать можно не больше ${formatKop(v.balance_kop)}`, 'warning');
+                    return;
+                }
+                const question = `Списать ${formatKop(kop)} (${v.kind_title.toLowerCase()} ${v.code}) в сделке №${leadId}?\n` +
+                    `Останется ${formatKop(v.balance_kop - kop)}.` +
+                    (ctx.promoCode ? `\n\nВнимание: в сделке указан промокод «${ctx.promoCode}».` : '');
+                if (!confirm(question)) return;
+                redeemBtn.disabled = true;
+                try {
+                    await loyaltyRequest('POST', `/api/v1/vouchers/${encodeURIComponent(v.code)}/redeem`, {
+                        amount_kop: kop,
+                        lead_id: leadId,
+                        comment: commentInput.value.trim(),
+                        actor: getCurrentManagerName(),
+                        idempotency_key: redeemKey
+                    });
+                    showNotification(`Списано ${formatKop(kop)}. Остаток ${formatKop(v.balance_kop - kop)}`, 'success');
+                    if (onChange) onChange();
+                } catch (error) {
+                    // Отказ сервиса (4xx) - операции не было, следующая попытка с новым ключом.
+                    // Обрыв связи или 5xx - ключ сохраняем: если списание прошло, повтор его не задвоит.
+                    if (error.status && error.status < 500) redeemKey = 'amo:redeem:' + vxUuid();
+                    showNotification(error.message, 'error');
+                    redeemBtn.disabled = false;
+                }
+            };
+        }
+
+        container.querySelectorAll('[data-vx-admin]').forEach(btn => {
+            btn.onclick = () => showVxAdminForm(container, v, opsDesc, btn.dataset.vxAdmin, onChange);
+        });
+    }
+
+    function showVxAdminForm(container, v, opsDesc, action, onChange) {
+        const box = container.querySelector('[data-vx="admin-form"]');
+        const leadId = getCurrentLeadId();
+        // Сколько списано в открытой сделке и ещё не возвращено - по умолчанию возвращаем это.
+        let leadNet = 0;
+        opsDesc.forEach(o => {
+            if (leadId && o.lead_id === leadId && (o.type === 'redeem' || o.type === 'refund')) leadNet -= o.amount_kop;
+        });
+
+        const cfg = {
+            refund: {
+                title: 'Возврат на баланс', submit: 'Вернуть', path: 'refund', amount: true, lead: true,
+                defaultKop: leadNet > 0 ? leadNet : v.spent_kop,
+                note: 'Вернуть можно не больше, чем списано. Если указана сделка - не больше, чем списано в ней.'
+            },
+            topup: {
+                title: 'Пополнение', submit: 'Пополнить', path: 'topup', amount: true,
+                note: 'Ручное пополнение, например при оплате наличными.'
+            },
+            block: {
+                title: 'Блокировка', submit: 'Заблокировать', path: 'block',
+                note: 'Пока номер заблокирован, списать с него нельзя. Например, если клиент сообщил, что номер увидели посторонние.'
+            },
+            unblock: { title: 'Разблокировка', submit: 'Разблокировать', path: 'block' }
+        }[action];
+        if (!cfg) return;
+
+        box.innerHTML = `
+            <div class="pcx-vx-action">
+                <div class="pcx-vx-action__title">${cfg.title}</div>
+                ${cfg.note ? `<div class="pcx-vx-muted">${cfg.note}</div>` : ''}
+                <div class="pcx-vx-row">
+                    ${cfg.amount ? `<input type="text" inputmode="decimal" class="pcx-vx-amount" data-f="amount" placeholder="Сумма, ₽" value="${cfg.defaultKop ? cfg.defaultKop / 100 : ''}">` : ''}
+                    ${cfg.lead ? `<input type="text" inputmode="numeric" class="pcx-vx-lead" data-f="lead" placeholder="№ сделки" value="${leadNet > 0 ? leadId : ''}">` : ''}
+                    <input type="text" data-f="comment" placeholder="Причина (обязательно)">
+                </div>
+                <div class="pcx-vx-actions">
+                    <button class="pcx-btn pcx-btn--ghost" data-f="cancel">Отмена</button>
+                    <button class="pcx-btn pcx-btn--primary" data-f="submit">${cfg.submit}</button>
+                </div>
+            </div>`;
+
+        let key = `amo:${action}:${vxUuid()}`;
+        box.querySelector('[data-f="cancel"]').onclick = () => { box.innerHTML = ''; };
+        const submitBtn = box.querySelector('[data-f="submit"]');
+        submitBtn.onclick = async () => {
+            const comment = box.querySelector('[data-f="comment"]').value.trim();
+            if (!comment) {
+                showNotification('Укажите причину', 'warning');
+                box.querySelector('[data-f="comment"]').focus();
+                return;
+            }
+            const body = { comment, actor: getCurrentManagerName() };
+            let question = `${cfg.submit}: ${v.kind_title.toLowerCase()} ${v.code}?`;
+            if (cfg.amount) {
+                const kop = rubToKop(box.querySelector('[data-f="amount"]').value);
+                if (!kop || kop <= 0) {
+                    showNotification('Укажите сумму', 'warning');
+                    return;
+                }
+                body.amount_kop = kop;
+                body.idempotency_key = key;
+                question = `${cfg.submit} ${formatKop(kop)} (${v.kind_title.toLowerCase()} ${v.code})?`;
+            }
+            if (cfg.lead) {
+                const lead = parseInt(box.querySelector('[data-f="lead"]').value, 10);
+                if (lead > 0) body.lead_id = lead;
+            }
+            if (cfg.path === 'block') body.blocked = action === 'block';
+            if (!confirm(question)) return;
+
+            submitBtn.disabled = true;
+            try {
+                await loyaltyRequest('POST', `/api/v1/vouchers/${encodeURIComponent(v.code)}/${cfg.path}`, body);
+                showNotification('Готово', 'success');
+                if (onChange) onChange();
+            } catch (error) {
+                if (error.status && error.status < 500) key = `amo:${action}:${vxUuid()}`;
+                showNotification(error.message, 'error');
+                submitBtn.disabled = false;
+            }
+        };
+    }
+
+    // ---------- окна поверх вкладки ----------
+
+    function openVxModal() {
+        const host = document.getElementById('promo-codes-overlay') || document.body;
+        const wrap = document.createElement('div');
+        wrap.className = 'pcx-vx-modal-overlay';
+        wrap.innerHTML = `
+            <div class="pcx-vx-modal">
+                <button class="pcx-iconbtn pcx-vx-modal__close" title="Закрыть">${ICONS.close}</button>
+                <div class="pcx-vx" data-vx="modal-body"></div>
+            </div>`;
+        host.appendChild(wrap);
+        const close = () => wrap.remove();
+        wrap.querySelector('.pcx-vx-modal__close').onclick = close;
+        wrap.addEventListener('click', (e) => {
+            if (e.target === wrap) close();
+        });
+        return { body: wrap.querySelector('[data-vx="modal-body"]'), close };
+    }
+
+    async function openVoucherModal(code) {
+        const { body } = openVxModal();
+        const load = async () => {
+            body.innerHTML = '<div class="pcx-vx-muted">Загружаю...</div>';
+            try {
+                const data = await loyaltyRequest('GET', '/api/v1/vouchers/' + encodeURIComponent(code));
+                renderVoucherCard(body, data, () => {
+                    load();
+                    vxRefreshAll();
+                });
+            } catch (error) {
+                body.innerHTML = vxNote('err', escHtml(error.message));
+            }
+        };
+        await load();
+    }
+
+    async function openIssueModal(kindKey) {
+        const kind = vxKindDef(kindKey);
+        const leadId = getCurrentLeadId();
+        const ctx = await getVxLeadContext();
+        const idemKey = 'amo:issue:' + vxUuid(); // повторный клик не выпустит второй номер
+        const { body, close } = openVxModal();
+        const isWedding = kind.key === 'wedding_subscription';
+
+        body.innerHTML = `
+            <div>
+                <h3 class="pcx-vx-modal__title">${kind.issueTitle}</h3>
+                <div class="pcx-vx-muted">${leadId ? 'Сделка №' + leadId + '. ' : ''}Номер сгенерируется автоматически.</div>
+            </div>
+            <div class="pcx-vx-form">
+                <div class="pcx-vx-field">
+                    <label>${isWedding ? 'Начальная сумма, ₽' : 'Сумма, ₽'}</label>
+                    <input type="text" inputmode="decimal" data-f="amount" placeholder="${isWedding ? '0' : '3000'}">
+                    ${isWedding ? '<div class="pcx-vx-muted">Можно оставить 0 - подписку пополнят гости</div>' : ''}
+                </div>
+                <div class="pcx-vx-field">
+                    <label>Телефон покупателя</label>
+                    <input type="tel" data-f="phone" value="${escHtml(ctx.phone)}" placeholder="+7 900 000-00-00">
+                </div>
+                <div class="pcx-vx-field">
+                    <label>Имя покупателя</label>
+                    <input type="text" data-f="name" value="${escHtml(ctx.contactName)}">
+                </div>
+                <div class="pcx-vx-field">
+                    <label>${isWedding ? 'Пара' : 'Кому (получатель)'}</label>
+                    <input type="text" data-f="recipient" placeholder="${isWedding ? 'Анна и Сергей' : 'Необязательно'}">
+                </div>
+                ${kind.key === 'flower_subscription' ? `
+                    <div class="pcx-vx-field pcx-vx-field--wide">
+                        <label>График доставок</label>
+                        <input type="text" data-f="schedule" placeholder="Например, букет раз в неделю по пятницам">
+                    </div>` : ''}
+                ${isWedding ? `
+                    <div class="pcx-vx-field">
+                        <label>Дата свадьбы</label>
+                        <input type="date" data-f="wedding_date">
+                    </div>` : ''}
+                <div class="pcx-vx-field pcx-vx-field--wide">
+                    <label>Пожелание</label>
+                    <textarea rows="2" data-f="message" placeholder="Текст для получателя, необязательно"></textarea>
+                </div>
+                <div class="pcx-vx-field pcx-vx-field--wide">
+                    <label>Служебный комментарий</label>
+                    <input type="text" data-f="comment" placeholder="Например, оплачен переводом, видит только команда">
+                </div>
+            </div>
+            <div data-f="error"></div>
+            <div class="pcx-vx-actions">
+                <button class="pcx-btn pcx-btn--ghost" data-f="cancel">Отмена</button>
+                <button class="pcx-btn pcx-btn--primary" data-f="submit">Выпустить</button>
+            </div>`;
+
+        const field = (name) => body.querySelector(`[data-f="${name}"]`);
+        field('cancel').onclick = close;
+        field('amount').focus();
+
+        field('submit').onclick = async () => {
+            const errBox = field('error');
+            const rawAmount = field('amount').value.trim();
+            const kop = rawAmount === '' && isWedding ? 0 : rubToKop(rawAmount);
+            if (!isFinite(kop) || kop < 0 || (!isWedding && kop === 0)) {
+                errBox.innerHTML = vxNote('warn', 'Укажите сумму больше нуля');
+                field('amount').focus();
+                return;
+            }
+            if (!field('phone').value.trim()) {
+                errBox.innerHTML = vxNote('warn', 'Укажите телефон покупателя - по нему сертификат найдётся у клиента');
+                field('phone').focus();
+                return;
+            }
+            const meta = {};
+            if (field('schedule') && field('schedule').value.trim()) meta.schedule = field('schedule').value.trim();
+            if (field('wedding_date') && field('wedding_date').value) meta.wedding_date = field('wedding_date').value;
+
+            if (!confirm(`Выпустить: ${kind.title.toLowerCase()} на ${formatKop(kop)}?`)) return;
+
+            field('submit').disabled = true;
+            errBox.innerHTML = '';
+            try {
+                const res = await loyaltyRequest('POST', '/api/v1/vouchers', {
+                    kind: kind.key,
+                    nominal_kop: kop,
+                    buyer_phone: field('phone').value.trim(),
+                    buyer_name: field('name').value.trim(),
+                    contact_id: ctx.contactId || 0,
+                    lead_id: leadId || 0,
+                    recipient_name: field('recipient').value.trim(),
+                    message: field('message').value.trim(),
+                    comment: field('comment').value.trim(),
+                    meta: Object.keys(meta).length ? meta : null,
+                    actor: getCurrentManagerName(),
+                    idempotency_key: idemKey
+                });
+                const v = res.voucher;
+                body.innerHTML = `
+                    <div>
+                        <h3 class="pcx-vx-modal__title">${escHtml(v.kind_title)} выпущен${kind.key === 'certificate' ? '' : 'а'}</h3>
+                        <div class="pcx-vx-muted">${formatKop(v.nominal_kop)}${v.buyer_name ? ', ' + escHtml(v.buyer_name) : ''}${v.buyer_phone ? ', ' + escHtml(vxPhone(v.buyer_phone)) : ''}</div>
+                    </div>
+                    <div class="pcx-vx-codebig">${escHtml(v.code)}</div>
+                    <div class="pcx-vx-actions">
+                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Скопировать номер</button>
+                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-text">Скопировать текст для клиента</button>
+                        <button class="pcx-btn pcx-btn--primary" data-f="open">Открыть карточку</button>
+                    </div>`;
+                field('copy-code').onclick = () => vxCopy(v.code);
+                field('copy-text').onclick = () => vxCopy(vxClientText(v));
+                field('open').onclick = () => {
+                    close();
+                    openVoucherModal(v.code);
+                };
+                showNotification(`Выпущен номер ${v.code}`, 'success');
+                vxRefreshAll();
+            } catch (error) {
+                errBox.innerHTML = vxNote('err', escHtml(error.message));
+                field('submit').disabled = false;
+            }
+        };
+    }
+
+    // ---------- разделы по видам: сводка и список ----------
+
+    function renderVxKindPanel() {
+        const panel = document.getElementById('vx-kind-panel');
+        if (!panel) return;
+        const kind = vxKindDef(vxSubtab);
+        panel.innerHTML = `
+            <section class="pcx-vx-block">
+                <div class="pcx-vx-block__title">
+                    <span>${kind.label}</span>
+                    ${canLoyalty('issue') ? `<button class="pcx-btn pcx-btn--primary" data-vx="issue">${ICONS.plus}<span>Выпустить</span></button>` : ''}
+                </div>
+                <div class="pcx-vx-row pcx-vx-between">
+                    <div class="pcx-vx-pills" data-vx="periods">
+                        ${VX_PERIODS.map(p => `<button class="pcx-vx-pill${p.key === vxPeriod ? ' is-active' : ''}" data-period="${p.key}">${p.label}</button>`).join('')}
+                    </div>
+                    <button class="pcx-iconbtn" data-vx="refresh" title="Обновить">${ICONS.refresh}</button>
+                </div>
+                <div class="pcx-vx-stats" data-vx="stats"></div>
+                <div class="pcx-vx-row">
+                    <select data-vx="state" style="flex: 0 0 190px;">
+                        <option value="">Все</option>
+                        <option value="active">Действуют</option>
+                        <option value="exhausted">Израсходованы</option>
+                        <option value="blocked">Заблокированы</option>
+                    </select>
+                    <input type="text" data-vx="q" placeholder="Поиск: номер, телефон, имя или № сделки">
+                </div>
+                <div data-vx="list"></div>
+            </section>`;
+
+        const issueBtn = panel.querySelector('[data-vx="issue"]');
+        if (issueBtn) issueBtn.onclick = () => openIssueModal(vxSubtab);
+        panel.querySelectorAll('[data-period]').forEach(btn => {
+            btn.onclick = () => {
+                vxPeriod = btn.dataset.period;
+                panel.querySelectorAll('[data-period]').forEach(b => b.classList.toggle('is-active', b === btn));
+                loadVxStats(panel);
+            };
+        });
+        panel.querySelector('[data-vx="refresh"]').onclick = () => {
+            loadVxStats(panel);
+            loadVxList(panel, false);
+        };
+        panel.querySelector('[data-vx="state"]').onchange = () => loadVxList(panel, false);
+        let searchTimer = null;
+        panel.querySelector('[data-vx="q"]').addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => loadVxList(panel, false), 400);
+        });
+
+        loadVxStats(panel);
+        loadVxList(panel, false);
+    }
+
+    async function loadVxStats(panel) {
+        const box = panel.querySelector('[data-vx="stats"]');
+        if (!box) return;
+        const kindKey = vxSubtab;
+        const period = VX_PERIODS.find(p => p.key === vxPeriod) || VX_PERIODS[1];
+        const from = period.days ? new Date(Date.now() - period.days * 864e5) : new Date('2020-01-01T00:00:00Z');
+        box.innerHTML = '<div class="pcx-vx-muted">Считаю...</div>';
+        try {
+            const res = await loyaltyRequest('GET', '/api/v1/stats?from=' + encodeURIComponent(from.toISOString()));
+            if (kindKey !== vxSubtab) return; // пока считали, переключили раздел
+            const s = (res.kinds || []).find(k => k.kind === kindKey) || {};
+            const isSub = kindKey !== 'certificate';
+            box.innerHTML = [
+                vxStat('Остаток у клиентов', formatKop(s.balance_kop), vxPlural(s.active || 0, 'действует', 'действуют', 'действуют'), 'accent'),
+                vxStat('Выпущено за период', formatKop(s.period_issued_kop),
+                    `${s.period_issued_count || 0} шт.` + (isSub && s.period_topup_kop ? `, пополнено на ${formatKop(s.period_topup_kop)}` : '')),
+                vxStat('Потрачено за период', formatKop(s.period_spent_kop)),
+                vxStat('За всё время', formatKop((s.issued_kop || 0) + (s.topup_kop || 0)), `${s.count || 0} шт., потрачено ${formatKop(s.spent_kop)}`),
+                vxStat('Израсходованы / заблокированы', `${s.exhausted || 0} / ${s.blocked || 0}`)
+            ].join('');
+        } catch (error) {
+            box.innerHTML = vxNote('err', escHtml(error.message));
+        }
+    }
+
+    async function loadVxList(panel, more) {
+        const box = panel.querySelector('[data-vx="list"]');
+        if (!box) return;
+        const kindKey = vxSubtab;
+        const state = panel.querySelector('[data-vx="state"]').value;
+        const q = panel.querySelector('[data-vx="q"]').value.trim();
+        const seq = ++vxListSeq;
+        const params = new URLSearchParams({ kind: kindKey, limit: '50', offset: String(more ? vxList.items.length : 0) });
+        if (state) params.set('state', state);
+        if (q) params.set('q', q);
+        if (!more) box.innerHTML = '<div class="pcx-vx-muted">Загружаю...</div>';
+        try {
+            const res = await loyaltyRequest('GET', '/api/v1/vouchers?' + params.toString());
+            if (seq !== vxListSeq) return; // уже пришёл более свежий запрос
+            vxList = { items: more ? vxList.items.concat(res.items || []) : (res.items || []), total: res.total || 0 };
+            if (!vxList.items.length) {
+                box.innerHTML = `<div class="pcx-vx-muted">${q || state ? 'Ничего не нашлось' : 'Пока ничего не выпущено'}</div>`;
+                return;
+            }
+            const kind = vxKindDef(kindKey);
+            const rest = vxList.total - vxList.items.length;
+            box.innerHTML = `
+                <div class="pcx-vx-tablewrap"><table class="pcx-vx-table">
+                    <thead><tr>
+                        <th>Номер</th><th>Покупатель</th><th>Выпущен</th>
+                        <th class="pcx-vx-num">${kind.nominal}</th><th class="pcx-vx-num">Потрачено</th><th class="pcx-vx-num">Остаток</th><th>Состояние</th>
+                    </tr></thead>
+                    <tbody>${vxList.items.map(v => `
+                        <tr class="is-click" data-vx-open="${escHtml(v.code)}">
+                            <td class="pcx-vx-code">${escHtml(v.code)}</td>
+                            <td>${escHtml(v.buyer_name || '')}<div class="pcx-vx-muted">${escHtml(vxPhone(v.buyer_phone))}</div></td>
+                            <td class="pcx-vx-nowrap">${vxDate(v.created_at)}${v.lead_id ? `<div class="pcx-vx-muted">${vxLeadLink(v.lead_id)}</div>` : ''}</td>
+                            <td class="pcx-vx-num">${formatKop(v.nominal_kop + (v.topup_kop || 0))}</td>
+                            <td class="pcx-vx-num">${formatKop(v.spent_kop)}</td>
+                            <td class="pcx-vx-num"><b>${formatKop(v.balance_kop)}</b></td>
+                            <td>${vxBadge(v)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table></div>
+                ${rest > 0 ? `<button class="pcx-btn pcx-btn--ghost pcx-vx-more" data-vx="more">Показать ещё ${rest}</button>` : ''}
+                <div class="pcx-vx-muted pcx-vx-hint">Показано ${vxList.items.length} из ${vxList.total}</div>`;
+            vxBindOpen(box);
+            const moreBtn = box.querySelector('[data-vx="more"]');
+            if (moreBtn) moreBtn.onclick = () => loadVxList(panel, true);
+        } catch (error) {
+            if (seq === vxListSeq) box.innerHTML = vxNote('err', escHtml(error.message));
+        }
+    }
+
+    // ---------- блок в «Настройках» ----------
+
+    async function renderLoyaltySettings(box) {
+        if (!box) return;
+        const { url, token } = await getLoyaltySettings();
+        box.innerHTML = `
+            <section class="pcx-vx pcx-vx-block">
+                <h3 class="pcx-vx-block__title">Подписки и сертификаты</h3>
+                <div class="pcx-vx-muted">Токен выдаёт администратор. От него зависят права: менеджер проверяет и списывает, администратор ещё выпускает, возвращает и блокирует.</div>
+                <div class="pcx-vx-field">
+                    <label>Адрес сервиса</label>
+                    <input type="text" data-vx="url" value="${escHtml(url)}">
+                </div>
+                <div class="pcx-vx-field">
+                    <label>Токен доступа</label>
+                    <input type="password" data-vx="token" value="${escHtml(token)}" placeholder="Вставьте токен" autocomplete="off">
+                </div>
+                <div class="pcx-vx-row">
+                    <button class="pcx-btn pcx-btn--primary" data-vx="save">Сохранить и проверить</button>
+                    ${token ? '<button class="pcx-btn pcx-btn--ghost" data-vx="forget">Удалить токен</button>' : ''}
+                </div>
+                <div data-vx="status"></div>
+            </section>`;
+
+        const status = box.querySelector('[data-vx="status"]');
+        const check = async () => {
+            status.innerHTML = vxNote('info', 'Проверяю подключение...');
+            try {
+                const me = await loadLoyaltyMe(true);
+                status.innerHTML = vxNote('ok', `Подключено. Роль: ${escHtml(LOYALTY_ROLES[me.role] || me.role)}.`);
+            } catch (error) {
+                status.innerHTML = vxNote('err', escHtml(error.message));
+            }
+        };
+
+        box.querySelector('[data-vx="save"]').onclick = async () => {
+            const newUrl = box.querySelector('[data-vx="url"]').value.trim().replace(/\/+$/, '') || LOYALTY_DEFAULT_URL;
+            const newToken = box.querySelector('[data-vx="token"]').value.trim();
+            if (!/^https:\/\//.test(newUrl)) {
+                showNotification('Адрес должен начинаться с https://', 'warning');
+                return;
+            }
+            await GM.setValue(LOYALTY_URL_KEY, newUrl === LOYALTY_DEFAULT_URL ? '' : newUrl);
+            await GM.setValue(LOYALTY_TOKEN_KEY, newToken);
+            loyaltyMe = null;
+            if (!newToken) {
+                status.innerHTML = vxNote('warn', 'Токен не указан');
+                return;
+            }
+            renderLoyaltySettings(box); // перерисовка покажет «Удалить токен» и сама проверит связь
+        };
+        const forgetBtn = box.querySelector('[data-vx="forget"]');
+        if (forgetBtn) {
+            forgetBtn.onclick = async () => {
+                if (!confirm('Удалить токен доступа с этого компьютера?')) return;
+                await GM.setValue(LOYALTY_TOKEN_KEY, '');
+                loyaltyMe = null;
+                renderLoyaltySettings(box);
+            };
+        }
+        if (token) check();
     }
 
     function saveWebAppUrl() {
