@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.3.1
+// @version      3.4.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -29,7 +29,7 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.3.1';
+    const SCRIPT_VERSION = '3.4.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -5269,8 +5269,8 @@
         { key: 'flower_subscription', label: 'Цветочные подписки', title: 'Цветочная подписка', issueTitle: 'Новая цветочная подписка', nominal: 'Внесено' },
         { key: 'wedding_subscription', label: 'Свадебные подписки', title: 'Свадебная подписка', issueTitle: 'Новая свадебная подписка', nominal: 'Внесено' }
     ];
-    const VOUCHER_OPS = { issue: 'Выпуск', topup: 'Пополнение', redeem: 'Списание', refund: 'Возврат', block: 'Блокировка', unblock: 'Разблокировка' };
-    const VOUCHER_SOURCES = { amo: 'amoCRM', site: 'сайт', paykeeper: 'PayKeeper', api: 'API' };
+    const VOUCHER_OPS = { issue: 'Выпуск', topup: 'Пополнение', redeem: 'Списание', refund: 'Возврат', block: 'Блокировка', unblock: 'Разблокировка', link: 'Точка СБП' };
+    const VOUCHER_SOURCES = { amo: 'amoCRM', site: 'сайт', paykeeper: 'PayKeeper', api: 'API', sbp: 'оплата по QR' };
     const LOYALTY_ROLES = { admin: 'администратор', manager: 'менеджер', server: 'сервер сайта' };
     const VX_PERIODS = [
         { key: 'week', label: 'Неделя', days: 7 },
@@ -5698,6 +5698,7 @@
         addRow('Пожелание', escHtml(v.message));
         addRow('График доставок', escHtml(meta.schedule || ''));
         addRow('Дата свадьбы', meta.wedding_date ? vxDate(meta.wedding_date) : '');
+        addRow('Точка СБП', v.sbp_merchant_id ? escHtml(v.sbp_merchant_id) + ' - оплаты по её QR зачисляются сами' : '');
         addRow('Выпущен', [vxDate(v.created_at, true), escHtml(v.created_by), v.lead_id ? 'сделка ' + vxLeadLink(v.lead_id) : ''].filter(Boolean).join(', '));
         addRow('Последнее списание', v.last_used_at ? vxDate(v.last_used_at, true) : '');
         addRow('Комментарий', escHtml(v.comment));
@@ -5708,6 +5709,9 @@
         }
         if (canLoyalty('topup') && v.kind !== 'certificate' && v.status !== 'blocked') {
             adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="topup">Пополнить</button>');
+        }
+        if (canLoyalty('issue') && v.kind !== 'certificate') {
+            adminBtns.push(`<button class="pcx-btn pcx-btn--ghost" data-vx-admin="link">${v.sbp_merchant_id ? 'Сменить точку СБП' : 'Привязать точку СБП'}</button>`);
         }
         if (canLoyalty('block')) {
             adminBtns.push(v.status === 'blocked'
@@ -5843,7 +5847,13 @@
                 title: 'Блокировка', submit: 'Заблокировать', path: 'block',
                 note: 'Пока номер заблокирован, списать с него нельзя. Например, если клиент сообщил, что номер увидели посторонние.'
             },
-            unblock: { title: 'Разблокировка', submit: 'Разблокировать', path: 'block' }
+            unblock: { title: 'Разблокировка', submit: 'Разблокировать', path: 'block' },
+            link: {
+                title: 'Торговая точка СБП', submit: 'Сохранить', path: 'sbp', merchant: true, noComment: true,
+                note: 'ID точки из интернет-банка Точки: «QR-платежи» -> точка «Для фамилия», номер под названием, ' +
+                    'например MA0004772653. Оплаты гостей по QR этой точки будут сами зачисляться на подписку. ' +
+                    'Пустое поле - отвязать точку.'
+            }
         }[action];
         if (!cfg) return;
 
@@ -5854,7 +5864,8 @@
                 <div class="pcx-vx-row">
                     ${cfg.amount ? `<input type="text" inputmode="decimal" class="pcx-vx-amount" data-f="amount" placeholder="Сумма, ₽" value="${cfg.defaultKop ? cfg.defaultKop / 100 : ''}">` : ''}
                     ${cfg.lead ? `<input type="text" inputmode="numeric" class="pcx-vx-lead" data-f="lead" placeholder="№ сделки" value="${leadNet > 0 ? leadId : ''}">` : ''}
-                    <input type="text" data-f="comment" placeholder="Причина (обязательно)">
+                    ${cfg.merchant ? `<input type="text" data-f="merchant" placeholder="MA0004772653" autocomplete="off" spellcheck="false" value="${escHtml(v.sbp_merchant_id || '')}">` : ''}
+                    ${cfg.noComment ? '' : '<input type="text" data-f="comment" placeholder="Причина (обязательно)">'}
                 </div>
                 <div class="pcx-vx-actions">
                     <button class="pcx-btn pcx-btn--ghost" data-f="cancel">Отмена</button>
@@ -5866,14 +5877,26 @@
         box.querySelector('[data-f="cancel"]').onclick = () => { box.innerHTML = ''; };
         const submitBtn = box.querySelector('[data-f="submit"]');
         submitBtn.onclick = async () => {
-            const comment = box.querySelector('[data-f="comment"]').value.trim();
-            if (!comment) {
+            const commentInput = box.querySelector('[data-f="comment"]');
+            const comment = commentInput ? commentInput.value.trim() : '';
+            if (commentInput && !comment) {
                 showNotification('Укажите причину', 'warning');
-                box.querySelector('[data-f="comment"]').focus();
+                commentInput.focus();
                 return;
             }
             const body = { comment, actor: getCurrentManagerName() };
             let question = `${cfg.submit}: ${v.kind_title.toLowerCase()} ${v.code}?`;
+            if (cfg.merchant) {
+                const merchant = box.querySelector('[data-f="merchant"]').value.replace(/\s+/g, '').toUpperCase();
+                if (merchant && !/^[A-Z]{2}[0-9]{6,14}$/.test(merchant)) {
+                    showNotification('ID точки выглядит как MA0004772653 - две латинские буквы и цифры', 'warning');
+                    return;
+                }
+                body.merchant_id = merchant;
+                question = merchant
+                    ? `Привязать точку ${merchant} к подписке ${v.code}? Оплаты по её QR будут зачисляться сюда.`
+                    : `Отвязать торговую точку от подписки ${v.code}? Оплаты по её QR перестанут зачисляться.`;
+            }
             if (cfg.amount) {
                 const kop = rubToKop(box.querySelector('[data-f="amount"]').value);
                 if (!kop || kop <= 0) {
@@ -5982,6 +6005,12 @@
                         <label>Дата свадьбы</label>
                         <input type="date" data-f="wedding_date">
                     </div>` : ''}
+                ${kind.key !== 'certificate' ? `
+                    <div class="pcx-vx-field pcx-vx-field--wide">
+                        <label>Торговая точка СБП (для оплат по QR)</label>
+                        <input type="text" data-f="merchant" placeholder="MA0004772653" autocomplete="off" spellcheck="false">
+                        <div class="pcx-vx-muted">Интернет-банк Точки: «QR-платежи» -> точка «Для фамилия», номер под названием. Оплаты гостей по её QR будут сами зачисляться на подписку. Можно добавить позже.</div>
+                    </div>` : ''}
                 <div class="pcx-vx-field pcx-vx-field--wide">
                     <label>Пожелание</label>
                     <textarea rows="2" data-f="message" placeholder="Текст для получателя, необязательно"></textarea>
@@ -6015,6 +6044,12 @@
                 field('phone').focus();
                 return;
             }
+            const merchant = field('merchant') ? field('merchant').value.replace(/\s+/g, '').toUpperCase() : '';
+            if (merchant && !/^[A-Z]{2}[0-9]{6,14}$/.test(merchant)) {
+                errBox.innerHTML = vxNote('warn', 'ID торговой точки выглядит как MA0004772653 - две латинские буквы и цифры');
+                field('merchant').focus();
+                return;
+            }
             const meta = {};
             if (field('schedule') && field('schedule').value.trim()) meta.schedule = field('schedule').value.trim();
             if (field('wedding_date') && field('wedding_date').value) meta.wedding_date = field('wedding_date').value;
@@ -6031,6 +6066,7 @@
                     buyer_name: field('name').value.trim(),
                     contact_id: ctx.contactId || 0,
                     lead_id: leadId || 0,
+                    sbp_merchant_id: merchant,
                     recipient_name: field('recipient').value.trim(),
                     message: field('message').value.trim(),
                     comment: field('comment').value.trim(),
