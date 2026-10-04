@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.5.0
+// @version      3.5.1
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -6315,6 +6315,7 @@
             await GM.setValue(LOYALTY_URL_KEY, newUrl === LOYALTY_DEFAULT_URL ? '' : newUrl);
             await GM.setValue(LOYALTY_TOKEN_KEY, newToken);
             loyaltyMe = null;
+            await refreshPromoBackend();
             if (!newToken) {
                 status.innerHTML = vxNote('warn', 'Токен не указан');
                 return;
@@ -6327,6 +6328,7 @@
                 if (!confirm('Удалить токен доступа с этого компьютера?')) return;
                 await GM.setValue(LOYALTY_TOKEN_KEY, '');
                 loyaltyMe = null;
+                await refreshPromoBackend();
                 renderLoyaltySettings(box);
             };
         }
@@ -6355,8 +6357,31 @@
         showNotification('URL сохранен', 'success');
     }
 
+    // Бэкенд промокодов по умолчанию (с 3.5.1): с токеном сервиса лояльности - сам сервис
+    // (.../loyalty/gas), без токена - прежний адрес GAS, который сам пересылает запросы
+    // в сервис. Сохранённый вручную прежний адрес GAS считается «по умолчанию».
+    let promoBackendHasToken = false;
+    let promoBackendLoyaltyBase = 'https://myskladandamocrm.ru/loyalty';
+
+    function resolvePromoBackendUrl() {
+        const saved = localStorage.getItem('promo_webapp_url');
+        if (saved && saved !== DEFAULT_WEBAPP_URL) return saved;
+        return promoBackendHasToken ? promoBackendLoyaltyBase + '/gas' : DEFAULT_WEBAPP_URL;
+    }
+
+    async function refreshPromoBackend() {
+        try {
+            const { url, token } = await getLoyaltySettings();
+            promoBackendHasToken = !!token;
+            promoBackendLoyaltyBase = url;
+        } catch (e) {
+            promoBackendHasToken = false;
+        }
+        webAppUrl = resolvePromoBackendUrl();
+    }
+
     function loadSettings() {
-        webAppUrl = localStorage.getItem('promo_webapp_url') || DEFAULT_WEBAPP_URL;
+        webAppUrl = resolvePromoBackendUrl();
         isAdminAuthorized = localStorage.getItem('promo_admin_authorized') === 'true';
         const cachedPromos = getCachedPromoCodes();
         if (cachedPromos) {
@@ -6515,6 +6540,7 @@
         injectStyles();
         injectFont();
         loadSettings();
+        refreshPromoBackend();
         createPromoButton();
         setTimeout(checkForScriptUpdate, 8000);   // не мешаем загрузке страницы сделки
     }
