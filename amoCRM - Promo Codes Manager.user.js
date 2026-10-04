@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.4.0
+// @version      3.5.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -2126,11 +2126,19 @@
             return { total: 0, byEmployee: {} };
         }
 
+        const headers = await promoBackendHeaders();
         return new Promise((resolve, reject) => {
             GM.xmlHttpRequest({
                 method: 'GET',
                 url: webAppUrl + '?action=getFriendsStats',
+                headers,
                 onload: (response) => {
+                    // GAS всегда отвечал 200; сервис лояльности без токена отвечает 401
+                    if (response.status !== 200) {
+                        console.error('[Промокоды] Статистика друзей:', promoBackendHttpError(response.status).message);
+                        resolve({ total: 0, byEmployee: {} });
+                        return;
+                    }
                     try {
                         const data = JSON.parse(response.responseText);
                         resolve(data);
@@ -2153,6 +2161,7 @@
             return { success: false };
         }
 
+        const headers = await promoBackendHeaders({ 'Content-Type': 'application/json' });
         return new Promise((resolve, reject) => {
             GM.xmlHttpRequest({
                 method: 'POST',
@@ -2162,7 +2171,7 @@
                     employee: employee,
                     leadUrl: leadUrl
                 }),
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 onload: (response) => {
                     try {
                         const data = JSON.parse(response.responseText);
@@ -2352,8 +2361,8 @@
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
                 <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">URL Google Apps Script Web App:</label>
-                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/..." 
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">URL бэкенда промокодов (Google Apps Script или сервис лояльности):</label>
+                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/... или https://.../loyalty/gas" 
                         style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                     <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
                 </div>
@@ -3002,8 +3011,30 @@
         return await updateResponse.json();
     }
 
+    // Бэкенд промокодов - GAS или его перенос в сервисе лояльности (адрес .../loyalty/gas).
+    // Сервис пускает скрипт по тому же токену, что и вкладку сертификатов: секретный адрес
+    // в скрипт класть нельзя, репозиторий скриптов публичный.
+    function isLoyaltyGasUrl(url) {
+        return /^https:\/\/[^/]+\/loyalty\/gas\/?$/.test(String(url || '').trim());
+    }
+
+    async function promoBackendHeaders(extra = {}) {
+        if (!isLoyaltyGasUrl(webAppUrl)) return extra;
+        const token = String((await GM.getValue(LOYALTY_TOKEN_KEY, '')) || '').trim();
+        return token ? { ...extra, 'Authorization': 'Bearer ' + token } : extra;
+    }
+
+    function promoBackendHttpError(status) {
+        if (isLoyaltyGasUrl(webAppUrl) && (status === 401 || status === 403)) {
+            return new Error(status === 401
+                ? 'Нужен токен доступа - укажите его во вкладке «Настройки», раздел сервиса сертификатов'
+                : 'Токен не подходит для промокодов - нужен токен менеджера или администратора');
+        }
+        return new Error(`HTTP ${status}`);
+    }
+
     function makeGoogleScriptRequest(method, data = null) {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             if (!webAppUrl) {
                 reject(new Error('Web App URL не настроен'));
                 return;
@@ -3013,9 +3044,10 @@
                 method: method,
                 url: webAppUrl + (method === 'GET' && data ? '?' + new URLSearchParams(data).toString() : ''),
                 timeout: 120000,
+                headers: await promoBackendHeaders(),
                 onload: function(response) {
                     if (response.status !== 200) {
-                        reject(new Error(`HTTP ${response.status}`));
+                        reject(promoBackendHttpError(response.status));
                         return;
                     }
                     const text = response.responseText || '';
@@ -3037,7 +3069,7 @@
             };
 
             if (method === 'POST' && data) {
-                config.headers = { 'Content-Type': 'application/json' };
+                config.headers = { ...config.headers, 'Content-Type': 'application/json' };
                 config.data = JSON.stringify(data);
             }
 
@@ -3092,7 +3124,7 @@
             }
         } catch (error) {
             console.error('Ошибка синхронизации:', error);
-            if (!silent) showNotification('Ошибка загрузки промокодов', 'error');
+            if (!silent) showNotification('Ошибка загрузки промокодов: ' + error.message, 'error');
         }
     }
 
@@ -6301,7 +6333,7 @@
         if (token) check();
     }
 
-    function saveWebAppUrl() {
+    async function saveWebAppUrl() {
         const url = document.getElementById('webapp-url-input').value.trim();
         
         if (!url) {
@@ -6309,13 +6341,17 @@
             return;
         }
 
-        if (!url.includes('script.google.com')) {
-            showNotification('Неверный формат URL', 'warning');
+        if (!url.includes('script.google.com') && !isLoyaltyGasUrl(url)) {
+            showNotification('Неверный формат URL: нужен адрес Google Apps Script или https://.../loyalty/gas', 'warning');
             return;
         }
 
         webAppUrl = url;
         localStorage.setItem('promo_webapp_url', url);
+        if (isLoyaltyGasUrl(url) && !(await GM.getValue(LOYALTY_TOKEN_KEY, ''))) {
+            showNotification('URL сохранен. Для сервиса лояльности укажите ниже токен доступа', 'warning');
+            return;
+        }
         showNotification('URL сохранен', 'success');
     }
 
