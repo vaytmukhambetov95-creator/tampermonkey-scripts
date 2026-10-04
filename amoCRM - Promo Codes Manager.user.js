@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.5.1
+// @version      3.6.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -5326,6 +5326,46 @@
         return { url: String(url).replace(/\/+$/, ''), token: String(token || '').trim() };
     }
 
+    // Скачивание файла из сервиса (PDF сертификата) с токеном: ответ - blob, сохраняем через ссылку.
+    async function loyaltyDownload(path, filename) {
+        const { url, token } = await getLoyaltySettings();
+        if (!token) {
+            throw new Error('Не задан токен доступа - укажите его во вкладке «Настройки»');
+        }
+        const blob = await new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: url + path,
+                headers: { 'Authorization': 'Bearer ' + token },
+                responseType: 'blob',
+                timeout: 60000,
+                onload: async (res) => {
+                    if (res.status === 200 && res.response) {
+                        resolve(res.response);
+                        return;
+                    }
+                    let message = `Сервис ответил ошибкой ${res.status}`;
+                    try {
+                        const text = res.response && res.response.text ? await res.response.text() : (res.responseText || '');
+                        const data = JSON.parse(text);
+                        if (data && data.error && data.error.message) message = data.error.message;
+                    } catch (e) { /* не JSON - оставляем общий текст */ }
+                    reject(new Error(message));
+                },
+                onerror: () => reject(new Error('Нет связи с сервисом сертификатов')),
+                ontimeout: () => reject(new Error('Сервис не ответил за минуту'))
+            });
+        });
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 10000);
+    }
+
     async function loyaltyRequest(method, path, body) {
         const { url, token } = await getLoyaltySettings();
         if (!token) {
@@ -5779,6 +5819,7 @@
                         <div class="pcx-vx-muted">Сертификаты и подписки не совмещаются с бонусными баллами и промокодами.</div>
                     </div>` : ''}
                 ${!leadId && v.state === 'active' && canLoyalty('redeem') ? vxNote('info', 'Списывать можно только из карточки сделки') : ''}
+                ${v.kind === 'certificate' && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать PDF</button><span class="pcx-vx-muted">евро 210×99 мм, QR ведёт на проверку остатка</span></div>` : ''}
                 ${adminBtns.length ? `<div class="pcx-vx-row">${adminBtns.join('')}</div>` : ''}
                 <div data-vx="admin-form"></div>
                 <div>
@@ -5786,6 +5827,23 @@
                     ${opsDesc.length ? vxOpsTable(opsDesc, false) : '<div class="pcx-vx-muted">Операций нет</div>'}
                 </div>
             </div>`;
+
+        const pdfBtn = container.querySelector('[data-vx="pdf"]');
+        if (pdfBtn) {
+            pdfBtn.onclick = async () => {
+                pdfBtn.disabled = true;
+                const label = pdfBtn.textContent;
+                pdfBtn.textContent = 'Готовим PDF...';
+                try {
+                    await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Сертификат ' + v.code + '.pdf');
+                } catch (e) {
+                    showNotification('PDF не получился: ' + e.message, 'error');
+                } finally {
+                    pdfBtn.disabled = false;
+                    pdfBtn.textContent = label;
+                }
+            };
+        }
 
         if (canRedeemHere) {
             const amountInput = container.querySelector('[data-vx="amount"]');
