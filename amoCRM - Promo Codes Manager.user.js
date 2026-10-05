@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.6.0
+// @version      3.6.1
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -481,6 +481,7 @@
             .pcx-vx-card .pcx-vx-stat { background: var(--pcx-surface-2); border-color: transparent; }
             .pcx-vx-kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-left: 0; margin-right: 0; margin-bottom: 0; font-size: 13px; }
             .pcx-vx-modal .pcx-vx-card { padding: 0; border: none; }
+            .pcx-vx-modal .pcx-vx-card__head { padding-right: 44px; } /* место под крестик окна */
             .pcx-vx-kv dt { color: var(--pcx-text-3); font-weight: 600; }
             .pcx-vx-kv dd { margin: 0; color: var(--pcx-text); font-weight: 500; word-break: break-word; }
             .pcx-vx-kv a, .pcx-vx-table a { color: var(--pcx-accent); font-weight: 600; text-decoration: none; }
