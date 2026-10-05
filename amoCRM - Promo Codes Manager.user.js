@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.6.1
+// @version      3.7.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -482,6 +482,9 @@
             .pcx-vx-kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; margin-left: 0; margin-right: 0; margin-bottom: 0; font-size: 13px; }
             .pcx-vx-modal .pcx-vx-card { padding: 0; border: none; }
             .pcx-vx-modal .pcx-vx-card__head { padding-right: 44px; } /* место под крестик окна */
+            .pcx-vx-field label.pcx-vx-check { display: flex; align-items: center; justify-content: flex-start; gap: 10px; font-weight: 600; cursor: pointer; }
+            .pcx-vx-field label.pcx-vx-check input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; }
+            [data-f="sbp-status"] .pcx-vx-row { margin-top: 10px; }
             .pcx-vx-kv dt { color: var(--pcx-text-3); font-weight: 600; }
             .pcx-vx-kv dd { margin: 0; color: var(--pcx-text); font-weight: 500; word-break: break-word; }
             .pcx-vx-kv a, .pcx-vx-table a { color: var(--pcx-accent); font-weight: 600; text-decoration: none; }
@@ -5772,6 +5775,8 @@
         addRow('График доставок', escHtml(meta.schedule || ''));
         addRow('Дата свадьбы', meta.wedding_date ? vxDate(meta.wedding_date) : '');
         addRow('Точка СБП', v.sbp_merchant_id ? escHtml(v.sbp_merchant_id) + ' - оплаты по её QR зачисляются сами' : '');
+        const qrPayload = meta.sbp_qr_payload || '';
+        addRow('QR для гостей', qrPayload ? `${escHtml(meta.sbp_brand || '')}${meta.sbp_brand ? ', ' : ''}<a href="${escHtml(qrPayload)}" target="_blank" rel="noopener">${escHtml(meta.sbp_qr_id || qrPayload)}</a>` : '');
         addRow('Выпущен', [vxDate(v.created_at, true), escHtml(v.created_by), v.lead_id ? 'сделка ' + vxLeadLink(v.lead_id) : ''].filter(Boolean).join(', '));
         addRow('Последнее списание', v.last_used_at ? vxDate(v.last_used_at, true) : '');
         addRow('Комментарий', escHtml(v.comment));
@@ -5782,6 +5787,10 @@
         }
         if (canLoyalty('topup') && v.kind !== 'certificate' && v.status !== 'blocked') {
             adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="topup">Пополнить</button>');
+        }
+        if (canLoyalty('issue') && v.kind === 'wedding_subscription' && !qrPayload) {
+            adminBtns.push(`<button class="pcx-btn pcx-btn--primary" data-vx-admin="sbp-auto">${v.sbp_merchant_id ? 'Создать QR для точки' : 'Создать точку и QR'}</button>`);
+            if (v.sbp_merchant_id) adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="sbp-qr">Привязать готовый QR</button>');
         }
         if (canLoyalty('issue') && v.kind !== 'certificate') {
             adminBtns.push(`<button class="pcx-btn pcx-btn--ghost" data-vx-admin="link">${v.sbp_merchant_id ? 'Сменить точку СБП' : 'Привязать точку СБП'}</button>`);
@@ -5821,6 +5830,7 @@
                     </div>` : ''}
                 ${!leadId && v.state === 'active' && canLoyalty('redeem') ? vxNote('info', 'Списывать можно только из карточки сделки') : ''}
                 ${v.kind === 'certificate' && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать PDF</button><span class="pcx-vx-muted">евро 210×99 мм, QR ведёт на проверку остатка</span></div>` : ''}
+                ${v.kind === 'wedding_subscription' && qrPayload && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать табличку PDF</button><span class="pcx-vx-muted">A6 105×148 мм для гостей, QR пополняет подписку</span></div>` : ''}
                 ${adminBtns.length ? `<div class="pcx-vx-row">${adminBtns.join('')}</div>` : ''}
                 <div data-vx="admin-form"></div>
                 <div>
@@ -5836,7 +5846,8 @@
                 const label = pdfBtn.textContent;
                 pdfBtn.textContent = 'Готовим PDF...';
                 try {
-                    await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Сертификат ' + v.code + '.pdf');
+                    if (v.kind === 'wedding_subscription') await vxDownloadPlate(v);
+                    else await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Сертификат ' + v.code + '.pdf');
                 } catch (e) {
                     showNotification('PDF не получился: ' + e.message, 'error');
                 } finally {
@@ -5915,7 +5926,91 @@
         });
     }
 
+    // Фамилия пары -> подпись точки и таблички («Для Антоновых») и назначение платежа
+    // («Подарок Антоновым»). Несклоняемые (Рябошапко, Ким) остаются как есть; поля после
+    // подстановки можно поправить руками.
+    function vxSurnameForms(raw) {
+        const words = String(raw || '').trim().split(/\s+/).filter(Boolean);
+        const s = words.length ? words[words.length - 1] : '';
+        if (!s) return { gen: '', dat: '' };
+        const low = s.toLowerCase();
+        const pair = (stem) => /[кгхжшчщ]$/i.test(stem) ? [stem + 'их', stem + 'им'] : [stem + 'ых', stem + 'ым'];
+        let r = null;
+        if (/(ые|ие)$/.test(low)) r = pair(s.slice(0, -2));
+        else if (/ы$/.test(low)) r = pair(s.slice(0, -1));
+        else if (/(ова|ева|ёва|ина|ына)$/.test(low)) r = pair(s.slice(0, -1));
+        else if (/(ов|ев|ёв|ин|ын)$/.test(low)) r = pair(s);
+        else if (/(ий|ый|ой|ая)$/.test(low)) r = pair(s.slice(0, -2));
+        return r ? { gen: r[0], dat: r[1] } : { gen: s, dat: s };
+    }
+
+    function vxPlateTexts(surname) {
+        const f = vxSurnameForms(surname);
+        return {
+            brand: f.gen ? 'Для ' + f.gen : '',
+            purpose: f.dat ? 'Подарок ' + f.dat + ' - цветочная подписка SHIP SHOP' : ''
+        };
+    }
+
+    // Поля для точки и QR: фамилия -> подпись и назначение (пока их не правили руками).
+    function vxSbpAutoFieldsHtml(surname) {
+        const t = vxPlateTexts(surname);
+        return `
+            <div class="pcx-vx-field" data-f="sbp-field">
+                <label>Фамилия пары (кто? - Антоновы)</label>
+                <input type="text" data-f="surname" value="${escHtml(surname || '')}" placeholder="Антоновы">
+            </div>
+            <div class="pcx-vx-field" data-f="sbp-field">
+                <label>Название точки и подпись таблички</label>
+                <input type="text" data-f="brand" maxlength="35" value="${escHtml(t.brand)}" placeholder="Для Антоновых">
+            </div>
+            <div class="pcx-vx-field pcx-vx-field--wide" data-f="sbp-field">
+                <label>Назначение платежа (гости видят его в банке)</label>
+                <input type="text" data-f="purpose" maxlength="140" value="${escHtml(t.purpose)}">
+            </div>`;
+    }
+
+    function vxBindSbpAutoFields(root) {
+        const sn = root.querySelector('[data-f="surname"]');
+        const brand = root.querySelector('[data-f="brand"]');
+        const purpose = root.querySelector('[data-f="purpose"]');
+        let touchedBrand = false, touchedPurpose = false;
+        brand.addEventListener('input', () => { touchedBrand = true; });
+        if (purpose) purpose.addEventListener('input', () => { touchedPurpose = true; });
+        sn.addEventListener('input', () => {
+            const t = vxPlateTexts(sn.value);
+            if (!touchedBrand) brand.value = t.brand;
+            if (purpose && !touchedPurpose) purpose.value = t.purpose;
+        });
+    }
+
+    // Подпись и назначение из полей или текст ошибки.
+    function vxReadSbpAuto(root) {
+        const brand = root.querySelector('[data-f="brand"]').value.trim();
+        const purpose = root.querySelector('[data-f="purpose"]').value.trim();
+        if (!brand) return { error: 'Укажите фамилию пары или название точки - например «Для Антоновых»' };
+        if (brand.length > 35) return { error: 'Название точки длиннее 35 символов - так требует банк, сократите' };
+        if (!purpose) return { error: 'Укажите назначение платежа' };
+        return { brand_name: brand, payment_purpose: purpose };
+    }
+
+    // Точка и QR в Точке для свадебной подписки -> обновлённая подписка.
+    async function vxCreateSbp(code, fields) {
+        const res = await loyaltyRequest('POST', `/api/v1/vouchers/${encodeURIComponent(code)}/sbp/auto`,
+            { ...fields, actor: getCurrentManagerName() });
+        return res.voucher;
+    }
+
+    async function vxDownloadPlate(v) {
+        const brand = (v.meta && v.meta.sbp_brand) || v.code;
+        await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Табличка ' + brand + '.pdf');
+    }
+
     function showVxAdminForm(container, v, opsDesc, action, onChange) {
+        if (action === 'sbp-auto' || action === 'sbp-qr') {
+            showVxSbpForm(container, v, action, onChange);
+            return;
+        }
         const box = container.querySelector('[data-vx="admin-form"]');
         const leadId = getCurrentLeadId();
         // Сколько списано в открытой сделке и ещё не возвращено - по умолчанию возвращаем это.
@@ -6018,6 +6113,70 @@
         };
     }
 
+    // Создать точку и QR (или только QR, если точка уже привязана) либо привязать готовый QR.
+    function showVxSbpForm(container, v, action, onChange) {
+        const box = container.querySelector('[data-vx="admin-form"]');
+        const surname = (v.recipient_name || '').trim().split(/\s+/).pop() || '';
+        const isAttach = action === 'sbp-qr';
+        const title = isAttach ? 'Привязать готовый QR'
+            : v.sbp_merchant_id ? 'Создать QR для точки ' + escHtml(v.sbp_merchant_id) : 'Создать точку и QR в Точке';
+        const note = isAttach
+            ? 'Если QR этой точки уже выпускали вручную: номер QR - часть ссылки после qr.nspk.ru/. Сервис проверит в Точке, что он действует и принадлежит привязанной точке.'
+            : 'Точка «Для фамилия» и многоразовый QR на счёт подписок: гость сканирует, вводит любую сумму, деньги сами зачисляются на подписку.';
+        box.innerHTML = `
+            <div class="pcx-vx-action">
+                <div class="pcx-vx-action__title">${title}</div>
+                <div class="pcx-vx-muted">${note}</div>
+                <div class="pcx-vx-form">
+                    ${isAttach ? `
+                        <div class="pcx-vx-field pcx-vx-field--wide">
+                            <label>Номер QR (qrcId) или ссылка qr.nspk.ru</label>
+                            <input type="text" data-f="qrc" placeholder="BS2A00426Q70NC1V9HF87VUNQQM6EJRC" autocomplete="off" spellcheck="false">
+                        </div>` : ''}
+                    ${vxSbpAutoFieldsHtml(surname)}
+                </div>
+                <div class="pcx-vx-actions">
+                    <button class="pcx-btn pcx-btn--ghost" data-f="cancel">Отмена</button>
+                    <button class="pcx-btn pcx-btn--primary" data-f="submit">${isAttach ? 'Привязать QR' : 'Создать'}</button>
+                </div>
+            </div>`;
+        if (isAttach) box.querySelector('[data-f="purpose"]').closest('[data-f="sbp-field"]').remove();
+        vxBindSbpAutoFields(box);
+        box.querySelector('[data-f="cancel"]').onclick = () => { box.innerHTML = ''; };
+        const submitBtn = box.querySelector('[data-f="submit"]');
+        const label = submitBtn.textContent;
+        submitBtn.onclick = async () => {
+            let fields;
+            if (isAttach) {
+                const brand = box.querySelector('[data-f="brand"]').value.trim();
+                const qrc = box.querySelector('[data-f="qrc"]').value.trim().replace(/^https?:\/\/qr\.nspk\.ru\//i, '');
+                if (!qrc) { showNotification('Укажите номер QR', 'warning'); return; }
+                if (!brand || brand.length > 35) { showNotification('Название точки - от 1 до 35 символов', 'warning'); return; }
+                fields = { qrc_id: qrc, brand_name: brand };
+            } else {
+                fields = vxReadSbpAuto(box);
+                if (fields.error) { showNotification(fields.error, 'warning'); return; }
+                const what = v.sbp_merchant_id ? `QR для точки ${v.sbp_merchant_id}` : `точку «${fields.brand_name}» и её QR`;
+                if (!confirm(`Создать в Точке ${what}?`)) return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = isAttach ? 'Проверяем QR...' : 'Создаём в Точке...';
+            try {
+                if (isAttach) {
+                    await loyaltyRequest('POST', `/api/v1/vouchers/${encodeURIComponent(v.code)}/sbp/qr`, { ...fields, actor: getCurrentManagerName() });
+                } else {
+                    await vxCreateSbp(v.code, fields);
+                }
+                showNotification(isAttach ? 'QR привязан' : 'Точка и QR готовы - можно скачать табличку', 'success');
+                if (onChange) onChange();
+            } catch (error) {
+                showNotification(error.message, 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = label;
+            }
+        };
+    }
+
     // ---------- окна поверх вкладки ----------
 
     function openVxModal() {
@@ -6096,8 +6255,14 @@
                         <label>Дата свадьбы</label>
                         <input type="date" data-f="wedding_date">
                     </div>` : ''}
-                ${kind.key !== 'certificate' ? `
+                ${isWedding && canLoyalty('issue') ? `
                     <div class="pcx-vx-field pcx-vx-field--wide">
+                        <label class="pcx-vx-check"><input type="checkbox" data-f="auto" checked> Создать торговую точку и QR в Точке автоматически</label>
+                        <div class="pcx-vx-muted">Точка «Для фамилия» и многоразовый QR на счёт подписок. После выпуска можно сразу скачать табличку для гостей.</div>
+                    </div>
+                    ${vxSbpAutoFieldsHtml('')}` : ''}
+                ${kind.key !== 'certificate' ? `
+                    <div class="pcx-vx-field pcx-vx-field--wide" data-f="manual-merchant">
                         <label>Торговая точка СБП (для оплат по QR)</label>
                         <input type="text" data-f="merchant" placeholder="MA0004772653" autocomplete="off" spellcheck="false">
                         <div class="pcx-vx-muted">Интернет-банк Точки: «QR-платежи» -> точка «Для фамилия», номер под названием. Оплаты гостей по её QR будут сами зачисляться на подписку. Можно добавить позже.</div>
@@ -6120,6 +6285,16 @@
         const field = (name) => body.querySelector(`[data-f="${name}"]`);
         field('cancel').onclick = close;
         field('amount').focus();
+        const autoOn = () => !!(field('auto') && field('auto').checked);
+        if (field('auto')) {
+            vxBindSbpAutoFields(body);
+            const toggle = () => {
+                body.querySelectorAll('[data-f="sbp-field"]').forEach(el => { el.style.display = autoOn() ? '' : 'none'; });
+                field('manual-merchant').style.display = autoOn() ? 'none' : '';
+            };
+            field('auto').onchange = toggle;
+            toggle();
+        }
 
         field('submit').onclick = async () => {
             const errBox = field('error');
@@ -6135,7 +6310,16 @@
                 field('phone').focus();
                 return;
             }
-            const merchant = field('merchant') ? field('merchant').value.replace(/\s+/g, '').toUpperCase() : '';
+            let sbpFields = null;
+            if (autoOn()) {
+                sbpFields = vxReadSbpAuto(body);
+                if (sbpFields.error) {
+                    errBox.innerHTML = vxNote('warn', escHtml(sbpFields.error));
+                    field('surname').focus();
+                    return;
+                }
+            }
+            const merchant = field('merchant') && !autoOn() ? field('merchant').value.replace(/\s+/g, '').toUpperCase() : '';
             if (merchant && !/^[A-Z]{2}[0-9]{6,14}$/.test(merchant)) {
                 errBox.innerHTML = vxNote('warn', 'ID торговой точки выглядит как MA0004772653 - две латинские буквы и цифры');
                 field('merchant').focus();
@@ -6145,7 +6329,8 @@
             if (field('schedule') && field('schedule').value.trim()) meta.schedule = field('schedule').value.trim();
             if (field('wedding_date') && field('wedding_date').value) meta.wedding_date = field('wedding_date').value;
 
-            if (!confirm(`Выпустить: ${kind.title.toLowerCase()} на ${formatKop(kop)}?`)) return;
+            if (!confirm(`Выпустить: ${kind.title.toLowerCase()} на ${formatKop(kop)}?` +
+                (sbpFields ? `\nИ создать в Точке точку «${sbpFields.brand_name}» с QR для гостей.` : ''))) return;
 
             field('submit').disabled = true;
             errBox.innerHTML = '';
@@ -6172,11 +6357,35 @@
                         <div class="pcx-vx-muted">${formatKop(v.nominal_kop)}${v.buyer_name ? ', ' + escHtml(v.buyer_name) : ''}${v.buyer_phone ? ', ' + escHtml(vxPhone(v.buyer_phone)) : ''}</div>
                     </div>
                     <div class="pcx-vx-codebig">${escHtml(v.code)}</div>
+                    <div data-f="sbp-status"></div>
                     <div class="pcx-vx-actions">
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Скопировать номер</button>
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-text">Скопировать текст для клиента</button>
                         <button class="pcx-btn pcx-btn--primary" data-f="open">Открыть карточку</button>
                     </div>`;
+                if (sbpFields) {
+                    // точка и QR - отдельным шагом: подписка уже выпущена, сбой Точки её не отменяет
+                    const st = field('sbp-status');
+                    const runSbp = async () => {
+                        st.innerHTML = vxNote('info', 'Создаём точку и QR в Точке...');
+                        try {
+                            const sv = await vxCreateSbp(v.code, sbpFields);
+                            st.innerHTML = vxNote('ok', `Точка «${escHtml(sbpFields.brand_name)}» ${escHtml(sv.sbp_merchant_id || '')} и QR готовы. Оплаты гостей будут сами зачисляться на подписку.`) +
+                                '<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--primary" data-f="plate">Скачать табличку PDF</button></div>';
+                            const plateBtn = field('plate');
+                            plateBtn.onclick = async () => {
+                                plateBtn.disabled = true;
+                                try { await vxDownloadPlate(sv); } catch (e) { showNotification('PDF не получился: ' + e.message, 'error'); }
+                                plateBtn.disabled = false;
+                            };
+                        } catch (e) {
+                            st.innerHTML = vxNote('err', 'Подписка выпущена, но точку и QR создать не удалось: ' + escHtml(e.message)) +
+                                '<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-f="sbp-retry">Повторить</button><span class="pcx-vx-muted">или позже - кнопкой «Создать точку и QR» в карточке</span></div>';
+                            field('sbp-retry').onclick = runSbp;
+                        }
+                    };
+                    runSbp();
+                }
                 field('copy-code').onclick = () => vxCopy(v.code);
                 field('copy-text').onclick = () => vxCopy(vxClientText(v));
                 field('open').onclick = () => {
