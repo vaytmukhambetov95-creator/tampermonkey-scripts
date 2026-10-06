@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.7.1
+// @version      3.8.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -29,7 +29,9 @@
     const REPLACEMENT_CODE = 'замена';         // код-маркер замены (сравнение регистронезависимо)
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
-    const SCRIPT_VERSION = '3.4.0';
+    // Версия берётся из шапки (@version): константу с 3.5.0 забывали поднимать, и плашка
+    // «Вышла новая версия» висела у всех. Запасное значение - только на случай, если GM.info нет.
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info && GM.info.script && GM.info.script.version) || '3.8.0';
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -40,7 +42,8 @@
         custom: { key: 'custom', label: 'Другое' }
     };
 
-    // URL Google Apps Script по умолчанию (можно изменить в настройках)
+    // Прежний адрес GAS: с 05.10.2026 он только пересылает запросы в сервис лояльности.
+    // Нужен менеджерам без токена; с токеном скрипт ходит в сервис напрямую.
     const DEFAULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxgjarqYaSwLNQPt0jXnBp3HbFZtjbhVwJxxn0_Pfy7eIVjxbEZnHlWHlaEERZFmvUj/exec';
     
     let promoCodesCache = [];
@@ -977,35 +980,13 @@
                         style="width: 100%; padding: 10px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; resize: vertical; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;"></textarea>
                 </div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
-                    <button id="add-promo-google-btn" style="
-                        padding: 15px;
-                        background: #E6407A;
-                        color: white;
-                        border: none;
-                        border-radius: 10px;
-                        cursor: pointer;
-                        font-size: 14px;
-                        font-weight: 600;
-                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                        opacity: 1;
-                    ">Сохранить в Google Таблицу</button>
-                    
-                    <button id="add-promo-amocrm-btn" style="
-                        padding: 15px;
-                        background: #E6407A;
-                        color: white;
-                        border: none;
-                        border-radius: 10px;
-                        cursor: pointer;
-                        font-size: 14px;
-                        font-weight: 600;
-                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                        opacity: 1;
-                    ">Сохранить в amoCRM</button>
-                </div>
+                <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; cursor: pointer; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
+                    <input type="checkbox" id="new-promo-to-amocrm" checked
+                        style="width: 18px; height: 18px; flex: 0 0 18px; margin: 0; cursor: pointer; accent-color: #E6407A;">
+                    Добавить в поле «Промокод» сделки amoCRM
+                </label>
+
+                <button id="add-promo-save-btn" class="pcx-btn pcx-btn--primary" style="width: 100%; height: 46px; margin-bottom: 15px;">${ICONS.save}<span>Сохранить промокод</span></button>
                 
                 <div id="add-promo-result" style="margin-top: 15px; padding: 15px; border-radius: 10px; display: none;"></div>
 
@@ -1107,11 +1088,7 @@
             }
         });
 
-        const addGoogleBtn = document.getElementById('add-promo-google-btn');
-        addGoogleBtn.onclick = () => addPromoCode('google');
-
-        const addAmoCRMBtn = document.getElementById('add-promo-amocrm-btn');
-        addAmoCRMBtn.onclick = () => addPromoCode('amocrm');
+        document.getElementById('add-promo-save-btn').onclick = addPromoCode;
 
         // Обработчик кнопки сохранения друзей
         const saveFriendsBtn = document.getElementById('save-friends-settings-btn');
@@ -1136,7 +1113,7 @@
         }
     }
 
-    // Сохранение настроек друзей и автоматическое добавление в Google Таблицу
+    // Сохранение настроек друзей и автоматическое добавление кода в базу промокодов
     async function saveFriendsSettings() {
         const friendsPromoCodeInput = document.getElementById('friends-promo-code-input');
         const employeesListInput = document.getElementById('employees-list-input');
@@ -1148,10 +1125,10 @@
         await GM.setValue('friendsPromoCode', promoCode);
         await GM.setValue('employeesList', employeesList);
 
-        // Автоматически добавляем промокод в Google Sheets
+        // Автоматически добавляем промокод в базу
         if (promoCode && webAppUrl) {
             try {
-                showNotification('Сохраняю настройки и добавляю промокод в Google Таблицу...', 'info');
+                showNotification('Сохраняю настройки и добавляю промокод в базу...', 'info');
 
                 // Проверяем, существует ли уже такой промокод
                 await syncWithGoogleSheet(true);
@@ -1173,7 +1150,7 @@
 
                     if (response.success) {
                         await syncWithGoogleSheet(true, true);
-                        showNotification('Настройки сохранены и промокод добавлен в Google Таблицу!', 'success');
+                        showNotification('Настройки сохранены, промокод добавлен в базу', 'success');
                     } else if (response.error && response.error.includes('already exists')) {
                         showNotification('Настройки промокода друзей сохранены!', 'success');
                     } else {
@@ -1184,10 +1161,10 @@
                 }
             } catch (error) {
                 console.error('Ошибка добавления промокода друзей:', error);
-                showNotification('Настройки сохранены локально, но не удалось добавить промокод в Google Таблицу', 'warning');
+                showNotification('Настройки сохранены локально, но промокод в базу не добавился', 'warning');
             }
         } else if (!webAppUrl) {
-            showNotification('Настройки сохранены локально. Настройте URL Google Apps Script для синхронизации', 'warning');
+            showNotification('Настройки сохранены локально: не задан адрес сервера промокодов', 'warning');
         } else {
             showNotification('Настройки промокода друзей сохранены!', 'success');
         }
@@ -1541,7 +1518,7 @@
      */
     async function addPhoneToPromo(code, phone, name) {
         if (!webAppUrl) {
-            showNotification('URL Google Apps Script не настроен', 'error');
+            showNotification('Не задан адрес сервера промокодов', 'error');
             return;
         }
 
@@ -1586,7 +1563,7 @@
      */
     async function removePhoneFromPromo(code, phone) {
         if (!webAppUrl) {
-            showNotification('URL Google Apps Script не настроен', 'error');
+            showNotification('Не задан адрес сервера промокодов', 'error');
             return;
         }
 
@@ -1924,9 +1901,10 @@
         container.innerHTML = scrollbarStyles + `
             <div style="max-width: 900px; margin: 0 auto;">
                 <div style="margin-bottom: 30px;">
-                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;">
-                        <span>Промокоды из Google Таблицы</span>
-                        <span style="font-size: 16px; background: #E6407A; color: white; padding: 5px 15px; border-radius: 20px;">${promoCodesCache.length}</span>
+                    <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; gap: 10px;">
+                        <span>База промокодов</span>
+                        <button id="refresh-promo-lists-btn" class="pcx-btn pcx-btn--ghost" style="height: 32px; padding: 0 12px; font-size: 13px; margin-left: auto;">${ICONS.refresh}<span>Обновить</span></button>
+                        <span id="google-promo-count" style="font-size: 16px; background: #E6407A; color: white; padding: 5px 15px; border-radius: 20px;">${promoCodesCache.length}</span>
                     </h3>
                     <div id="google-promos-list" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         ${renderGooglePromosList()}
@@ -1937,8 +1915,8 @@
                 
                 <div style="margin-bottom: 30px;">
                     <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;">
-                        <span>Промокоды из amoCRM</span>
-                        <span style="font-size: 16px; background: #F7F7F9; color: #E6407A; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
+                        <span>В поле «Промокод» сделки amoCRM</span>
+                        <span id="amocrm-promo-count" style="font-size: 16px; background: #F7F7F9; color: #E6407A; padding: 5px 15px; border-radius: 20px;">${amoCRMPromoCodes.length}</span>
                     </h3>
                     <div id="amocrm-promos-list" style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
                         ${renderAmoCRMPromosList()}
@@ -1979,6 +1957,17 @@
 
         attachDeleteButtonsListeners();
 
+        // Списки подгружаются сами (с 3.8.0; раньше - кнопками в «Настройках»).
+        // База - с учётом кэша на 10 минут, поле сделки amoCRM - каждый раз, это свой домен.
+        syncWithGoogleSheet(true);
+        syncWithAmoCRM(true);
+        document.getElementById('refresh-promo-lists-btn').onclick = async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            await Promise.all([syncWithGoogleSheet(false, true), syncWithAmoCRM(true)]);
+            btn.disabled = false;
+        };
+
         // Загружаем статистику друзей сотрудников
         loadAndRenderFriendsStats();
 
@@ -1990,7 +1979,7 @@
 
     function renderGooglePromosList() {
         if (promoCodesCache.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
+            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список пуст. Нажмите «Обновить» вверху вкладки.</div>`;
         }
 
         // Создаём Set кодов из amoCRM для быстрой проверки
@@ -2085,7 +2074,7 @@
 
     function renderAmoCRMPromosList() {
         if (amoCRMPromoCodes.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокоды не загружены. Загрузите их в разделе "Настройки"</div>`;
+            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список пуст. Нажмите «Обновить» вверху вкладки.</div>`;
         }
 
         return amoCRMPromoCodes.map(promo => {
@@ -2339,16 +2328,9 @@
                 btn.textContent = 'Добавляю...';
 
                 try {
+                    // Списки перерисует сама addPromoCodeToAmoCRM (через syncWithAmoCRM)
                     await addPromoCodeToAmoCRM(code);
                     showNotification(`Промокод "${code}" добавлен в amoCRM`, 'success');
-
-                    // Обновляем список
-                    await syncWithAmoCRM(true);
-                    const googleList = document.getElementById('google-promos-list');
-                    if (googleList) {
-                        googleList.innerHTML = renderGooglePromosList();
-                        attachDeleteButtonsListeners();
-                    }
                 } catch (error) {
                     console.error('Ошибка добавления в amoCRM:', error);
                     showNotification(`Ошибка: ${error.message}`, 'error');
@@ -2364,106 +2346,6 @@
         
         container.innerHTML = `
             <div style="max-width: 600px; margin: 0 auto;">
-                <div style="margin-bottom: 20px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">URL бэкенда промокодов (Google Apps Script или сервис лояльности):</label>
-                    <input type="text" id="webapp-url-input" value="${webAppUrl}" placeholder="https://script.google.com/macros/s/... или https://.../loyalty/gas" 
-                        style="width: 100%; padding: 12px; border: 1px solid #E7E7EC; border-radius: 10px; font-size: 14px; box-sizing: border-box; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
-                    <div style="font-size: 12px; color: #9C9CA8; margin-top: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">После деплоя Google Apps Script скопируйте сюда URL Web App</div>
-                </div>
-                
-                <button id="save-webapp-url-btn" style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #E6407A;
-                    color: white;
-                    border: none;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 600;
-                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    margin-bottom: 20px;
-                ">Сохранить URL</button>
-                
-                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
-                
-                <button id="sync-google-sheet-btn" style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #FFFFFF;
-                    color: #16161A;
-                    border: 1px solid #E7E7EC;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 600;
-                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    margin-bottom: 15px;
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">Загрузить промокоды из Google Таблицы</button>
-                
-                <button id="sync-amocrm-btn" style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #FFFFFF;
-                    color: #16161A;
-                    border: 1px solid #E7E7EC;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 600;
-                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    margin-bottom: 15px;
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">Загрузить промокоды из amoCRM</button>
-                
-                <button id="sync-amocrm-to-google-btn" style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #FFFFFF;
-                    color: #16161A;
-                    border: 1px solid #E7E7EC;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 600;
-                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    margin-bottom: 15px;
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">Выгрузить: amoCRM → Google Таблица</button>
-
-                <button id="sync-google-to-amocrm-btn" style="
-                    width: 100%;
-                    padding: 12px;
-                    background: #FFFFFF;
-                    color: #16161A;
-                    border: 1px solid #E7E7EC;
-                    border-radius: 10px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 600;
-                    font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-                    margin-bottom: 20px;
-                    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                ">Загрузить: Google Таблица → amoCRM</button>
-
-                <div style="background: #F7F7F9; padding: 20px; border-radius: 10px;">
-                    <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #16161A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Статистика</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <div>
-                            <div style="font-size: 12px; color: #9C9CA8; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокодов в Google:</div>
-                            <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="google-promo-count">0</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 12px; color: #9C9CA8; margin-bottom: 5px; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Промокодов в amoCRM:</div>
-                            <div style="font-size: 24px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="amocrm-promo-count">0</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 15px; font-size: 12px; color: #6E6E7A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;" id="last-sync-time">Последняя синхронизация: никогда</div>
-                </div>
-
-                <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
-
                 <div id="loyalty-settings-box"></div>
 
                 <hr style="border: none; border-top: 2px solid #E7E7EC; margin: 30px 0;">
@@ -2511,36 +2393,6 @@
             </div>
         `;
 
-        document.getElementById('save-webapp-url-btn').onclick = saveWebAppUrl;
-        
-        const syncGoogleBtn = document.getElementById('sync-google-sheet-btn');
-        syncGoogleBtn.onclick = () => syncWithGoogleSheet(false);
-        
-        const syncAmoCRMBtn = document.getElementById('sync-amocrm-btn');
-        syncAmoCRMBtn.onclick = () => syncWithAmoCRM(false);
-
-        const syncAmoCRMToGoogleBtn = document.getElementById('sync-amocrm-to-google-btn');
-        syncAmoCRMToGoogleBtn.onclick = async () => {
-            if (!webAppUrl) {
-                showNotification('Сначала настройте URL Google Apps Script', 'warning');
-                return;
-            }
-            if (amoCRMPromoCodes.length === 0) {
-                showNotification('Сначала загрузите промокоды из amoCRM', 'warning');
-                return;
-            }
-            await syncAmoCRMToGoogleSheets();
-        };
-
-        const syncGoogleToAmoCRMBtn = document.getElementById('sync-google-to-amocrm-btn');
-        syncGoogleToAmoCRMBtn.onclick = async () => {
-            if (promoCodesCache.length === 0) {
-                showNotification('Сначала загрузите промокоды из Google Таблицы', 'warning');
-                return;
-            }
-            await syncGoogleToAmoCRM();
-        };
-
         if (isAdminAuthorized) {
             const adminLogoutBtn = document.getElementById('admin-logout-btn');
             if (adminLogoutBtn) {
@@ -2562,7 +2414,6 @@
             }
         }
 
-        updateStatistics();
         renderLoyaltySettings(document.getElementById('loyalty-settings-box'));
     }
 
@@ -2791,7 +2642,7 @@
             );
 
             if (!promoEnumItem) {
-                throw new Error('Промокод не найден в списке amoCRM. Синхронизируйте промокоды в настройках.');
+                throw new Error('Этого промокода нет в поле «Промокод» сделки amoCRM. Добавьте его кнопкой «+ Добавить в amoCRM» во вкладке «Промокоды».');
             }
 
             const domain = window.location.hostname;
@@ -2856,8 +2707,12 @@
         }
     }
 
-    async function addPromoCode(target) {
+    // Одна кнопка вместо двух (с 3.8.0). Порядок важен: сначала база (там скидка, срок, лимит,
+    // оттуда код уходит на сайт), потом вариант в поле сделки. Раньше кнопка amoCRM, нажатая
+    // первой, заводила код в базе со скидкой 0, и следующий add отвечал «already exists».
+    async function addPromoCode() {
         const resultDiv = document.getElementById('add-promo-result');
+        const saveBtn = document.getElementById('add-promo-save-btn');
 
         if (!isAdminAuthorized) {
             showResult(resultDiv, 'Для добавления промокодов требуется авторизация. Перейдите в раздел "Настройки"', 'warning');
@@ -2881,55 +2736,66 @@
             return;
         }
 
-        if (target === 'google') {
-            if (!webAppUrl) {
-                showResult(resultDiv, 'Сначала настройте URL Google Apps Script в разделе "Настройки"', 'warning');
+        const toAmoCRM = document.getElementById('new-promo-to-amocrm').checked;
+        const codeHtml = `<strong>${escHtml(code)}</strong>`;
+
+        saveBtn.disabled = true;
+        showResult(resultDiv, 'Сохраняю промокод...', 'info');
+
+        try {
+            const response = await makeGoogleScriptRequest('POST', {
+                action: 'add',
+                code: code,
+                type: type,
+                discount: parseFloat(discount),
+                discountType: discountType,
+                minOrderAmount: minAmount ? parseFloat(minAmount) : '',
+                expiryDate: expiry,
+                maxUsages: maxUsage ? parseInt(maxUsage) : '',
+                status: 'активен',
+                phoneBindings: phoneBindings.length > 0 ? phoneBindings : undefined,
+                description: description
+            });
+
+            if (!response.success) {
+                const reason = response.error === 'Promo code already exists'
+                    ? `промокод ${code} уже есть в базе`
+                    : (response.error || 'не удалось добавить промокод');
+                showResult(resultDiv, `Ошибка: ${escHtml(reason)}`, 'error');
                 return;
             }
+        } catch (error) {
+            console.error('Ошибка добавления промокода:', error);
+            showResult(resultDiv, `Ошибка: ${escHtml(error.message)}`, 'error');
+            return;
+        } finally {
+            saveBtn.disabled = false;
+        }
 
-            showResult(resultDiv, 'Добавляю промокод в Google Таблицу...', 'info');
-
-            try {
-                const promoData = {
-                    action: 'add',
-                    code: code,
-                    type: type,
-                    discount: parseFloat(discount),
-                    discountType: discountType,
-                    minOrderAmount: minAmount ? parseFloat(minAmount) : '',
-                    expiryDate: expiry,
-                    maxUsages: maxUsage ? parseInt(maxUsage) : '',
-                    status: 'активен',
-                    phoneBindings: phoneBindings.length > 0 ? phoneBindings : undefined,
-                    description: description
-                };
-
-                const response = await makeGoogleScriptRequest('POST', promoData);
-
-                if (response.success) {
-                    showResult(resultDiv, 'Промокод успешно добавлен в Google Таблицу!', 'success');
-                    await syncWithGoogleSheet(true);
-                    clearPromoForm();
-                } else {
-                    showResult(resultDiv, `Ошибка: ${response.error || 'Не удалось добавить промокод'}`, 'error');
-                }
-            } catch (error) {
-                console.error('Ошибка добавления промокода:', error);
-                showResult(resultDiv, `Ошибка: ${error.message}`, 'error');
-            }
-        } else if (target === 'amocrm') {
-            showResult(resultDiv, 'Добавляю промокод в amoCRM...', 'info');
-            
+        let amoNote = '';
+        if (toAmoCRM) {
+            saveBtn.disabled = true;
+            showResult(resultDiv, `Промокод ${codeHtml} сохранён. Добавляю его в поле сделки amoCRM...`, 'info');
             try {
                 await addPromoCodeToAmoCRM(code);
-                showResult(resultDiv, 'Промокод успешно добавлен в amoCRM!', 'success');
-                await syncWithAmoCRM();
-                clearPromoForm();
+                amoNote = ' и добавлен в поле «Промокод» сделки';
             } catch (error) {
-                console.error('Ошибка добавления в amoCRM:', error);
-                showResult(resultDiv, `Ошибка: ${error.message}`, 'error');
+                if (/уже существует/i.test(error.message)) {
+                    amoNote = ', в поле «Промокод» сделки он уже был';
+                } else {
+                    console.error('Ошибка добавления в amoCRM:', error);
+                    showResult(resultDiv, `Промокод ${codeHtml} сохранён, но в поле сделки amoCRM не добавился: ${escHtml(error.message)}. Добавьте его кнопкой «+ Добавить в amoCRM» во вкладке «Промокоды».`, 'warning');
+                    await syncWithGoogleSheet(true, true);
+                    return;
+                }
+            } finally {
+                saveBtn.disabled = false;
             }
         }
+
+        showResult(resultDiv, `Промокод ${codeHtml} сохранён${amoNote}.`, 'success');
+        await syncWithGoogleSheet(true, true);
+        clearPromoForm();
     }
 
     function clearPromoForm() {
@@ -2950,8 +2816,7 @@
 
     async function addPromoCodeToAmoCRM(code) {
         console.log('addPromoCodeToAmoCRM вызвана с кодом:', code);
-        const domain = window.location.hostname;
-        const fieldUrl = `https://${domain}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
+        const fieldUrl = `${window.location.origin}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
 
         console.log('Получаю текущие значения поля...');
         const getResponse = await fetch(fieldUrl, {
@@ -3010,7 +2875,7 @@
         }
 
         console.log('Промокод успешно добавлен в amoCRM');
-        await syncWithAmoCRM();
+        await syncWithAmoCRM(true);
 
         return await updateResponse.json();
     }
@@ -3037,6 +2902,7 @@
         return new Error(`HTTP ${status}`);
     }
 
+    // Имя историческое: запрос идёт в бэкенд промокодов (сервис лояльности или пересылка GAS)
     function makeGoogleScriptRequest(method, data = null) {
         return new Promise(async (resolve, reject) => {
             if (!webAppUrl) {
@@ -3060,15 +2926,15 @@
                     } catch (error) {
                         // Чаще всего сюда попадает оборванный или слишком большой ответ -
                         // без длины и начала текста причину не отличить от сбоя сети
-                        console.error('Не разобран ответ Google Apps Script:', text.slice(0, 300));
+                        console.error('Не разобран ответ сервера промокодов:', text.slice(0, 300));
                         reject(new Error(`ответ не разобран (получено ${text.length} символов)`));
                     }
                 },
                 ontimeout: function() {
-                    reject(new Error('Google Apps Script не ответил за 2 минуты'));
+                    reject(new Error('Сервер промокодов не ответил за 2 минуты'));
                 },
                 onerror: function(error) {
-                    reject(new Error('Ошибка соединения с Google Apps Script'));
+                    reject(new Error('Нет связи с сервером промокодов'));
                 }
             };
 
@@ -3081,9 +2947,21 @@
         });
     }
 
+    // Перерисовка обоих списков вкладки «Промокоды» разом: attachDeleteButtonsListeners вешает
+    // обработчики через addEventListener, и список, который не перерисовали, получал их повторно.
+    function rerenderPromoLists() {
+        const activeTab = document.querySelector('.promo-tab.active');
+        if (!activeTab || activeTab.dataset.tab !== 'list') return;
+        const googleList = document.getElementById('google-promos-list');
+        const amoCRMList = document.getElementById('amocrm-promos-list');
+        if (googleList) googleList.innerHTML = renderGooglePromosList();
+        if (amoCRMList) amoCRMList.innerHTML = renderAmoCRMPromosList();
+        attachDeleteButtonsListeners();
+    }
+
     async function syncWithGoogleSheet(silent = false, forceRefresh = false) {
         if (!webAppUrl) {
-            if (!silent) showNotification('Настройте URL Google Apps Script', 'warning');
+            if (!silent) showNotification('Не задан адрес сервера промокодов', 'warning');
             return;
         }
 
@@ -3105,7 +2983,7 @@
             updateStatistics();
         }
 
-        if (!silent) showNotification('Загружаю промокоды из Google Таблицы...', 'info');
+        if (!silent) showNotification('Загружаю промокоды...', 'info');
 
         try {
             const response = await makeGoogleScriptRequest('GET', { action: 'getAll' });
@@ -3114,17 +2992,11 @@
                 promoCodesCache = response.promoCodes;
                 cachePromoCodes(promoCodesCache);
                 updateStatistics();
-                
-                const activeTab = document.querySelector('.promo-tab.active');
-                if (activeTab && activeTab.dataset.tab === 'list') {
-                    const googleList = document.getElementById('google-promos-list');
-                    if (googleList) {
-                        googleList.innerHTML = renderGooglePromosList();
-                        attachDeleteButtonsListeners();
-                    }
-                }
-                
-                if (!silent) showNotification(`Загружено ${promoCodesCache.length} промокодов из Google Таблицы`, 'success');
+                rerenderPromoLists();
+
+                if (!silent) showNotification(`Загружено промокодов: ${promoCodesCache.length}`, 'success');
+            } else if (!silent) {
+                showNotification('Ошибка загрузки промокодов: ' + (response.error || 'пустой ответ сервера'), 'error');
             }
         } catch (error) {
             console.error('Ошибка синхронизации:', error);
@@ -3152,8 +3024,7 @@
         if (!silent) showNotification('Загружаю промокоды из amoCRM...', 'info');
 
         try {
-            const domain = window.location.hostname;
-            const apiUrl = `https://${domain}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
+            const apiUrl = `${window.location.origin}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
 
             const response = await fetch(apiUrl, {
                 method: 'GET',
@@ -3180,136 +3051,15 @@
                 if (!silent) showNotification(`Загружено ${amoCRMPromoCodes.length} промокодов из amoCRM`, 'success');
                 updateStatistics();
                 
-                const activeTab = document.querySelector('.promo-tab.active');
-                if (activeTab && activeTab.dataset.tab === 'list') {
-                    const amoCRMList = document.getElementById('amocrm-promos-list');
-                    if (amoCRMList) {
-                        amoCRMList.innerHTML = renderAmoCRMPromosList();
-                        attachDeleteButtonsListeners();
-                    }
-                }
-                
-                if (webAppUrl && amoCRMPromoCodes.length > 0 && !silent) {
-                    await syncAmoCRMToGoogleSheets();
-                }
+                // Обратно в базу варианты поля больше не выгружаются (с 3.8.0): выгрузка
+                // заводила каждый вариант как код со скидкой 0.
+                rerenderPromoLists();
             } else {
                 if (!silent) showNotification('Не удалось получить список промокодов', 'warning');
             }
         } catch (error) {
             console.error('Ошибка загрузки из amoCRM:', error);
             if (!silent) showNotification('Ошибка загрузки из amoCRM', 'error');
-        }
-    }
-
-    async function syncAmoCRMToGoogleSheets() {
-        if (!webAppUrl) return;
-
-        try {
-            showNotification('Синхронизирую промокоды с Google Таблицей...', 'info');
-            
-            const formattedPromoCodes = amoCRMPromoCodes.map(promo => {
-                const parsed = parseAmoCRMPromoCode(promo.value);
-                return {
-                    code: parsed.code,
-                    type: 'многоразовый',
-                    discount: 0,
-                    discountType: 'процент',
-                    minOrderAmount: '',
-                    expiryDate: '',
-                    maxUsages: '',
-                    status: 'активен',
-                    phoneBinding: '',
-                    employee: '',
-                    description: parsed.description
-                };
-            });
-
-            const response = await makeGoogleScriptRequest('POST', {
-                action: 'syncFromAmoCRM',
-                promoCodes: formattedPromoCodes
-            });
-
-            if (response.success) {
-                showNotification(
-                    `${response.message}`, 
-                    'success'
-                );
-                
-                await syncWithGoogleSheet(true);
-            } else {
-                showNotification('Ошибка синхронизации с Google Таблицей', 'warning');
-            }
-        } catch (error) {
-            console.error('Ошибка синхронизации с Google:', error);
-        }
-    }
-
-    /**
-     * Синхронизирует промокоды из Google Таблицы в amoCRM
-     * Добавляет только те промокоды, которых нет в amoCRM
-     */
-    async function syncGoogleToAmoCRM() {
-        try {
-            // Сначала обновим данные из обоих источников
-            await syncWithGoogleSheet(true);
-            await syncWithAmoCRM(true);
-
-            // Получаем список промокодов из amoCRM (только коды, в верхнем регистре)
-            const amoCRMCodesSet = new Set(
-                amoCRMPromoCodes.map(p => {
-                    const parsed = parseAmoCRMPromoCode(p.value);
-                    return parsed.code.toUpperCase();
-                })
-            );
-
-            // Находим промокоды, которые есть в Google, но нет в amoCRM
-            const missingInAmoCRM = promoCodesCache.filter(promo =>
-                !amoCRMCodesSet.has(promo.code.toUpperCase())
-            );
-
-            if (missingInAmoCRM.length === 0) {
-                showNotification('Все промокоды из Google Таблицы уже есть в amoCRM', 'success');
-                return;
-            }
-
-            // Показываем подтверждение
-            const confirmMessage = `Найдено ${missingInAmoCRM.length} промокодов в Google Таблице, которых нет в amoCRM:\n\n${missingInAmoCRM.map(p => p.code).join(', ')}\n\nДобавить их в amoCRM?`;
-
-            if (!confirm(confirmMessage)) {
-                showNotification('Синхронизация отменена', 'info');
-                return;
-            }
-
-            showNotification(`Добавляю ${missingInAmoCRM.length} промокодов в amoCRM...`, 'info');
-
-            let addedCount = 0;
-            let errorCount = 0;
-
-            for (const promo of missingInAmoCRM) {
-                try {
-                    await addPromoCodeToAmoCRM(promo.code);
-                    addedCount++;
-                    console.log(`[Синхронизация] Добавлен промокод: ${promo.code}`);
-                } catch (error) {
-                    errorCount++;
-                    console.error(`[Синхронизация] Ошибка добавления промокода ${promo.code}:`, error);
-                }
-            }
-
-            // Обновляем список промокодов amoCRM
-            await syncWithAmoCRM(true);
-
-            if (errorCount === 0) {
-                showNotification(`Успешно добавлено ${addedCount} промокодов в amoCRM`, 'success');
-            } else {
-                showNotification(`Добавлено ${addedCount} промокодов, ошибок: ${errorCount}`, 'warning');
-            }
-
-            // Обновляем статистику
-            updateStatistics();
-        } catch (error) {
-            console.error('Ошибка синхронизации Google → amoCRM:', error);
-            showNotification(`Ошибка: ${error.message}`, 'error');
         }
     }
 
@@ -3703,7 +3453,7 @@
         }
 
         if (!amoCRMPromoCodes || amoCRMPromoCodes.length === 0) {
-            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#A85F0F; font-family:${AN_FONT}; font-size:14px;">Промокоды из amoCRM не загружены. Откройте «Настройки» и синхронизируйте промокоды.</div>`;
+            summaryEl.innerHTML = `<div style="text-align:center; padding:25px; color:#A85F0F; font-family:${AN_FONT}; font-size:14px;">Промокоды из amoCRM не загружены. Нажмите «Обновить» вверху вкладки «Промокоды».</div>`;
             return;
         }
 
@@ -4030,14 +3780,14 @@
             return;
         }
         
-        if (!confirm(`Вы уверены, что хотите удалить промокод "${code}" из Google Таблицы?`)) {
+        if (!confirm(`Вы уверены, что хотите удалить промокод "${code}" из базы промокодов?`)) {
             console.log('Пользователь отменил удаление');
             return;
         }
 
         if (!webAppUrl) {
             console.error('Web App URL не настроен');
-            showNotification('Настройте URL Google Apps Script', 'warning');
+            showNotification('Не задан адрес сервера промокодов', 'warning');
             return;
         }
 
@@ -4056,7 +3806,7 @@
                 promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== code.toUpperCase());
                 cachePromoCodes(promoCodesCache);
                 
-                showNotification('Промокод удален из Google Таблицы!', 'success');
+                showNotification('Промокод удалён из базы', 'success');
                 
                 switchTab('list');
             } else {
@@ -4075,7 +3825,7 @@
             return;
         }
         
-        if (!confirm(`Вы уверены, что хотите удалить промокод "${code}"?\n\nВнимание: Промокод будет удален из amoCRM и Google Таблицы.`)) {
+        if (!confirm(`Вы уверены, что хотите удалить промокод "${code}"?\n\nВнимание: Промокод будет удалён из поля сделки amoCRM и из базы промокодов.`)) {
             return;
         }
 
@@ -4129,16 +3879,16 @@
                     });
                     
                     if (deleteFromGoogleResponse.success) {
-                        console.log('Промокод также удален из Google Таблицы');
+                        console.log('Промокод также удалён из базы');
                         promoCodesCache = promoCodesCache.filter(p => p.code.toUpperCase() !== cleanCode.toUpperCase());
                         cachePromoCodes(promoCodesCache);
                     }
                 } catch (googleError) {
-                    console.warn('Не удалось удалить промокод из Google Таблицы:', googleError);
+                    console.warn('Не удалось удалить промокод из базы:', googleError);
                 }
             }
             
-            showNotification('Промокод удален из amoCRM и Google Таблицы!', 'success');
+            showNotification('Промокод удалён из amoCRM и из базы', 'success');
             
             switchTab('list');
 
@@ -4346,7 +4096,7 @@
             return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">
                 <div style="font-size: 48px; margin-bottom: 15px;"></div>
                 <div style="font-size: 16px; margin-bottom: 10px;">Заявок пока нет</div>
-                <div style="font-size: 14px;">Нажмите "Синхронизировать" чтобы загрузить заявки из Google Таблицы</div>
+                <div style="font-size: 14px;">Нажмите «Синхронизировать», чтобы загрузить заявки</div>
             </div>`;
         }
         
@@ -4676,7 +4426,7 @@
 
     async function loadAnalytics() {
         if (!webAppUrl) {
-            showNotification('Настройте URL Google Apps Script', 'warning');
+            showNotification('Не задан адрес сервера промокодов', 'warning');
             return;
         }
         
@@ -5014,7 +4764,7 @@
         }
 
         if (!webAppUrl) {
-            showResult(resultDiv, 'Настройте URL Google Apps Script в разделе "Настройки"', 'warning');
+            showResult(resultDiv, 'Не задан адрес сервера промокодов', 'warning');
             return;
         }
 
@@ -5081,11 +4831,11 @@
     
     async function syncBonusRequests(silent = false) {
         if (!webAppUrl) {
-            if (!silent) showNotification('Настройте URL Google Apps Script', 'warning');
+            if (!silent) showNotification('Не задан адрес сервера промокодов', 'warning');
             return;
         }
         
-        if (!silent) showNotification('Загружаю заявки из Google Таблицы...', 'info');
+        if (!silent) showNotification('Загружаю заявки...', 'info');
         
         try {
             const response = await makeGoogleScriptRequest('GET', { action: 'getBonusRequests' });
@@ -5110,7 +4860,7 @@
 
     async function loadCategoryAnalytics() {
         if (!webAppUrl) {
-            showNotification('Настройте URL Google Apps Script', 'warning');
+            showNotification('Не задан адрес сервера промокодов', 'warning');
             return;
         }
 
@@ -5588,7 +5338,7 @@
                 <div class="pcx-vx"><section class="pcx-vx-block">
                     <h3 class="pcx-vx-block__title">Подписки и сертификаты</h3>
                     ${vxNote(error.status ? 'err' : 'warn', escHtml(error.message))}
-                    <div class="pcx-vx-muted">Токен доступа выдаёт администратор. Вставьте его во вкладке «Настройки», в блоке «Подписки и сертификаты».</div>
+                    <div class="pcx-vx-muted">Токен доступа выдаёт администратор. Вставьте его во вкладке «Настройки», в блоке «Доступ к сервису лояльности».</div>
                     <button class="pcx-btn pcx-btn--primary" data-vx="to-settings">Открыть настройки</button>
                 </section></div>`;
             container.querySelector('[data-vx="to-settings"]').onclick = () => switchTab('settings');
@@ -6545,8 +6295,8 @@
         const { url, token } = await getLoyaltySettings();
         box.innerHTML = `
             <section class="pcx-vx pcx-vx-block">
-                <h3 class="pcx-vx-block__title">Подписки и сертификаты</h3>
-                <div class="pcx-vx-muted">Токен выдаёт администратор. От него зависят права: менеджер проверяет и списывает, администратор ещё выпускает, возвращает и блокирует.</div>
+                <h3 class="pcx-vx-block__title">Доступ к сервису лояльности</h3>
+                <div class="pcx-vx-muted">Токен выдаёт администратор. С ним промокоды и бонусы работают напрямую через сервис, быстрее. Во вкладке «Подписки и сертификаты» от него зависят права: менеджер проверяет и списывает, администратор ещё выпускает, возвращает и блокирует.</div>
                 <div class="pcx-vx-field">
                     <label>Адрес сервиса</label>
                     <input type="text" data-vx="url" value="${escHtml(url)}">
@@ -6603,37 +6353,14 @@
         if (token) check();
     }
 
-    async function saveWebAppUrl() {
-        const url = document.getElementById('webapp-url-input').value.trim();
-        
-        if (!url) {
-            showNotification('Введите URL', 'warning');
-            return;
-        }
-
-        if (!url.includes('script.google.com') && !isLoyaltyGasUrl(url)) {
-            showNotification('Неверный формат URL: нужен адрес Google Apps Script или https://.../loyalty/gas', 'warning');
-            return;
-        }
-
-        webAppUrl = url;
-        localStorage.setItem('promo_webapp_url', url);
-        if (isLoyaltyGasUrl(url) && !(await GM.getValue(LOYALTY_TOKEN_KEY, ''))) {
-            showNotification('URL сохранен. Для сервиса лояльности укажите ниже токен доступа', 'warning');
-            return;
-        }
-        showNotification('URL сохранен', 'success');
-    }
-
-    // Бэкенд промокодов по умолчанию (с 3.5.1): с токеном сервиса лояльности - сам сервис
-    // (.../loyalty/gas), без токена - прежний адрес GAS, который сам пересылает запросы
-    // в сервис. Сохранённый вручную прежний адрес GAS считается «по умолчанию».
+    // Бэкенд промокодов (с 3.5.1): с токеном сервиса лояльности - сам сервис (.../loyalty/gas),
+    // без токена - прежний адрес GAS, который сам пересылает запросы в сервис.
+    // С 3.8.0 адрес только вычисляется: поле URL из настроек убрано, а сохранённый когда-то
+    // вручную адрес (promo_webapp_url) стирается - старое развёртывание GAS писало бы в таблицу.
     let promoBackendHasToken = false;
     let promoBackendLoyaltyBase = 'https://myskladandamocrm.ru/loyalty';
 
     function resolvePromoBackendUrl() {
-        const saved = localStorage.getItem('promo_webapp_url');
-        if (saved && saved !== DEFAULT_WEBAPP_URL) return saved;
         return promoBackendHasToken ? promoBackendLoyaltyBase + '/gas' : DEFAULT_WEBAPP_URL;
     }
 
@@ -6649,6 +6376,7 @@
     }
 
     function loadSettings() {
+        localStorage.removeItem('promo_webapp_url');
         webAppUrl = resolvePromoBackendUrl();
         isAdminAuthorized = localStorage.getItem('promo_admin_authorized') === 'true';
         const cachedPromos = getCachedPromoCodes();
@@ -6702,21 +6430,13 @@
         return null;
     }
 
+    // Счётчики в заголовках списков вкладки «Промокоды» (с 3.8.0; раньше - блок «Статистика» в настройках)
     function updateStatistics() {
         const googleCount = document.getElementById('google-promo-count');
         const amoCRMCount = document.getElementById('amocrm-promo-count');
-        const lastSync = document.getElementById('last-sync-time');
 
         if (googleCount) googleCount.textContent = promoCodesCache.length;
         if (amoCRMCount) amoCRMCount.textContent = amoCRMPromoCodes.length;
-
-        if (lastSync) {
-            const lastSyncTime = localStorage.getItem('promo_last_sync');
-            if (lastSyncTime) {
-                const date = new Date(lastSyncTime);
-                lastSync.textContent = `Последняя синхронизация: ${formatDateTime(date)}`;
-            }
-        }
     }
 
     function getLeadBudget() {
