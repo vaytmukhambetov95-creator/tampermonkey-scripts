@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.8.1
+// @version      3.9.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -495,7 +495,7 @@
             .pcx-vx-modal .pcx-vx-card { padding: 0; border: none; }
             .pcx-vx-modal .pcx-vx-card__head { padding-right: 44px; } /* место под крестик окна */
             .pcx-vx-field label.pcx-vx-check { display: flex; align-items: center; justify-content: flex-start; gap: 10px; font-weight: 600; cursor: pointer; }
-            .pcx-vx-field label.pcx-vx-check input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; cursor: pointer; accent-color: var(--pcx-accent); }
+            .pcx-vx-field label.pcx-vx-check input[type="checkbox"], .pcx-vx-field label.pcx-vx-check input[type="radio"] { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; cursor: pointer; accent-color: var(--pcx-accent); }
             [data-f="sbp-status"] .pcx-vx-row { margin-top: 10px; }
             .pcx-vx-kv dt { color: var(--pcx-text-3); font-weight: 600; }
             .pcx-vx-kv dd { margin: 0; color: var(--pcx-text); font-weight: 500; word-break: break-word; }
@@ -5175,7 +5175,7 @@
     const LOYALTY_TOKEN_KEY = 'loyalty_api_token';
     const VOUCHER_KINDS = [
         { key: 'certificate', label: 'Сертификаты', title: 'Сертификат', issueTitle: 'Новый сертификат', nominal: 'Номинал' },
-        { key: 'flower_subscription', label: 'Цветочные подписки', title: 'Цветочная подписка', issueTitle: 'Новая цветочная подписка', nominal: 'Внесено' },
+        { key: 'flower_subscription', label: 'Цветочные подписки', title: 'Цветочная подписка', issueTitle: 'Новая цветочная подписка', nominal: 'Стоимость' },
         { key: 'wedding_subscription', label: 'Свадебные подписки', title: 'Свадебная подписка', issueTitle: 'Новая свадебная подписка', nominal: 'Внесено' }
     ];
     const VOUCHER_OPS = { issue: 'Выпуск', topup: 'Пополнение', redeem: 'Списание', refund: 'Возврат', block: 'Блокировка', unblock: 'Разблокировка', link: 'Точка СБП' };
@@ -5327,6 +5327,26 @@
         return withTime ? formatDateTime(d) : d.toLocaleDateString('ru-RU');
     }
 
+    // Дата графика ГГГГ-ММ-ДД -> «12.10, пн». Без new Date(строка): она сдвинула бы день по поясу.
+    function vxPlanDate(ymd) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+        if (!m) return escHtml(ymd || '');
+        const wd = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'][new Date(+m[1], m[2] - 1, +m[3]).getDay()];
+        return `${m[3]}.${m[2]}, ${wd}`;
+    }
+
+    // График цветочной подписки: доставленные букеты отмечены, следующий выделен.
+    function vxFlowerSchedule(f) {
+        const done = f.bouquets_total - f.bouquets_left;
+        return (f.deliveries || []).map((d, i) => i < done
+            ? `<span class="pcx-vx-muted">${vxPlanDate(d)} ✓</span>`
+            : (i === done ? `<b>${vxPlanDate(d)}</b>` : vxPlanDate(d))).join(' &nbsp;·&nbsp; ');
+    }
+
+    function vxFlowerTierText(t) {
+        return `${t.tier} - ${formatKop(t.price_kop)} (${vxPlural(t.bouquets, 'букет', 'букета', 'букетов')} по ${formatKop(t.bouquet_kop)})`;
+    }
+
     function vxKindDef(key) {
         return VOUCHER_KINDS.find(k => k.key === key) || VOUCHER_KINDS[0];
     }
@@ -5388,6 +5408,14 @@
     // Текст для клиента после выпуска - менеджер вставляет его в переписку.
     function vxClientText(v) {
         const lines = [];
+        if (v.flower) {
+            const f = v.flower;
+            lines.push(`Цветочная подписка ${f.tier}: ${vxPlural(f.bouquets_total, 'букет', 'букета', 'букетов')}, букет раз в неделю`);
+            lines.push(`Номер: ${v.code}`);
+            if (f.deliveries && f.deliveries.length) lines.push(`Первая доставка: ${vxPlanDate(f.deliveries[0])}`);
+            lines.push('Остаток букетов можно проверить по номеру на ship-shop.ru/certificate/');
+            return lines.join('\n');
+        }
         if (v.kind === 'certificate') {
             lines.push(`Подарочный сертификат на ${formatKop(v.nominal_kop)}`);
             lines.push(`Номер: ${v.code}`);
@@ -5624,6 +5652,7 @@
         const v = data.voucher;
         const opsDesc = (data.operations || []).slice().reverse();
         const meta = v.meta || {};
+        const flower = v.flower || null; // цветочная подписка по тарифу: списание - ровно один букет
         const leadId = getCurrentLeadId();
         const ctx = (vxLeadCtxCache && vxLeadCtxCache.leadId === leadId) ? vxLeadCtxCache : { budget: getLeadBudget(), promoCode: '' };
         const budgetKop = Math.round((ctx.budget || 0) * 100);
@@ -5645,7 +5674,7 @@
         addRow('Покупатель', [escHtml(v.buyer_name), escHtml(vxPhone(v.buyer_phone))].filter(Boolean).join(', '));
         addRow(v.kind === 'wedding_subscription' ? 'Пара' : 'Получатель', escHtml(v.recipient_name));
         addRow('Пожелание', escHtml(v.message));
-        addRow('График доставок', escHtml(meta.schedule || ''));
+        addRow('График доставок', flower ? vxFlowerSchedule(flower) : escHtml(meta.schedule || ''));
         addRow('Дата свадьбы', meta.wedding_date ? vxDate(meta.wedding_date) : '');
         addRow('Точка СБП', v.sbp_merchant_id ? escHtml(v.sbp_merchant_id) + ' - оплаты по её QR зачисляются сами' : '');
         const qrPayload = meta.sbp_qr_payload || '';
@@ -5656,16 +5685,17 @@
 
         const adminBtns = [];
         if (canLoyalty('refund') && v.spent_kop > 0) {
-            adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="refund">Вернуть на баланс</button>');
+            adminBtns.push(`<button class="pcx-btn pcx-btn--ghost" data-vx-admin="refund">${flower ? 'Вернуть букет' : 'Вернуть на баланс'}</button>`);
         }
-        if (canLoyalty('topup') && v.kind !== 'certificate' && v.status !== 'blocked') {
+        // Пополняется только свадебная подписка: цветочную покупают разово по тарифу.
+        if (canLoyalty('topup') && v.kind === 'wedding_subscription' && v.status !== 'blocked') {
             adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="topup">Пополнить</button>');
         }
         if (canLoyalty('issue') && v.kind === 'wedding_subscription' && !qrPayload) {
             adminBtns.push(`<button class="pcx-btn pcx-btn--primary" data-vx-admin="sbp-auto">${v.sbp_merchant_id ? 'Создать QR для точки' : 'Создать точку и QR'}</button>`);
             if (v.sbp_merchant_id) adminBtns.push('<button class="pcx-btn pcx-btn--ghost" data-vx-admin="sbp-qr">Привязать готовый QR</button>');
         }
-        if (canLoyalty('issue') && v.kind !== 'certificate') {
+        if (canLoyalty('issue') && (v.kind === 'wedding_subscription' || v.sbp_merchant_id)) {
             adminBtns.push(`<button class="pcx-btn pcx-btn--ghost" data-vx-admin="link">${v.sbp_merchant_id ? 'Сменить точку СБП' : 'Привязать точку СБП'}</button>`);
         }
         if (canLoyalty('block')) {
@@ -5684,12 +5714,28 @@
                     ${vxBadge(v)}
                 </div>
                 <div class="pcx-vx-stats">
+                    ${flower ? `
+                    ${vxStat('Осталось букетов', `${flower.bouquets_left} из ${flower.bouquets_total}`, 'остаток ' + formatKop(v.balance_kop), v.state === 'active' ? 'ok' : '')}
+                    ${vxStat('Тариф', escHtml(flower.tier), formatKop(v.nominal_kop) + ', букет ' + formatKop(flower.bouquet_kop))}
+                    ${vxStat('Доставлено', String(flower.bouquets_total - flower.bouquets_left), '')}
+                    ` : `
                     ${vxStat('Остаток', formatKop(v.balance_kop), '', v.state === 'active' ? 'ok' : '')}
                     ${vxStat(v.kind === 'certificate' ? 'Номинал' : 'Начальный взнос', formatKop(v.nominal_kop), v.topup_kop ? 'пополнено на ' + formatKop(v.topup_kop) : '')}
                     ${vxStat('Потрачено', formatKop(v.spent_kop), v.uses ? vxPlural(v.uses, 'списание', 'списания', 'списаний') : '')}
+                    `}
                 </div>
                 <dl class="pcx-vx-kv">${rows.join('')}</dl>
-                ${canRedeemHere ? `
+                ${canRedeemHere && flower ? `
+                    <div class="pcx-vx-action">
+                        <div class="pcx-vx-action__title">Доставка по подписке в сделке №${leadId}</div>
+                        ${ctx.promoCode ? vxNote('warn', `В сделке указан промокод «${escHtml(ctx.promoCode)}» - с ним списывать нельзя.`) : ''}
+                        <div class="pcx-vx-row">
+                            <input type="text" data-vx="comment" placeholder="Комментарий (необязательно)">
+                            <button class="pcx-btn pcx-btn--primary" data-vx="redeem">Букет доставлен</button>
+                        </div>
+                        <div class="pcx-vx-muted">Спишется один букет тарифа ${escHtml(flower.tier)} (${formatKop(flower.bouquet_kop)}), останется ${flower.bouquets_left - 1} из ${flower.bouquets_total}. Если клиент выбрал букет дороже - разницу он доплачивает в сделке.</div>
+                    </div>` : ''}
+                ${canRedeemHere && !flower ? `
                     <div class="pcx-vx-action">
                         <div class="pcx-vx-action__title">Списать в этой сделке №${leadId}</div>
                         ${ctx.promoCode ? vxNote('warn', `В сделке указан промокод «${escHtml(ctx.promoCode)}» - с ним списывать нельзя.`) : ''}
@@ -5702,6 +5748,7 @@
                         <div class="pcx-vx-muted">Сертификаты и подписки не совмещаются с бонусными баллами и промокодами.</div>
                     </div>` : ''}
                 ${!leadId && v.state === 'active' && canLoyalty('redeem') ? vxNote('info', 'Списывать можно только из карточки сделки') : ''}
+                ${flower && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать PDF</button><span class="pcx-vx-muted">карточка в подарок, евро 210×99 мм, QR ведёт на проверку остатка букетов</span></div>` : ''}
                 ${v.kind === 'certificate' && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать PDF</button><span class="pcx-vx-muted">евро 210×99 мм, QR ведёт на проверку остатка</span></div>` : ''}
                 ${v.kind === 'wedding_subscription' && qrPayload && canLoyalty('read') ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--ghost" data-vx="pdf">Скачать табличку PDF</button><span class="pcx-vx-muted">A6 105×148 мм для гостей, QR пополняет подписку</span></div>` : ''}
                 ${adminBtns.length ? `<div class="pcx-vx-row">${adminBtns.join('')}</div>` : ''}
@@ -5720,7 +5767,7 @@
                 pdfBtn.textContent = 'Готовим PDF...';
                 try {
                     if (v.kind === 'wedding_subscription') await vxDownloadPlate(v);
-                    else await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Сертификат ' + v.code + '.pdf');
+                    else await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', (flower ? 'Цветочная подписка ' : 'Сертификат ') + v.code + '.pdf');
                 } catch (e) {
                     showNotification('PDF не получился: ' + e.message, 'error');
                 } finally {
@@ -5730,7 +5777,37 @@
             };
         }
 
-        if (canRedeemHere) {
+        if (canRedeemHere && flower) {
+            const commentInput = container.querySelector('[data-vx="comment"]');
+            const redeemBtn = container.querySelector('[data-vx="redeem"]');
+            let redeemKey = 'amo:redeem:' + vxUuid();
+            redeemBtn.onclick = async () => {
+                const left = flower.bouquets_left - 1;
+                const question = `Отметить доставку букета по подписке ${v.code} в сделке №${leadId}?\n` +
+                    `Спишется ${formatKop(flower.bouquet_kop)}, останется ${left} из ${flower.bouquets_total}.` +
+                    (ctx.promoCode ? `\n\nВнимание: в сделке указан промокод «${ctx.promoCode}».` : '');
+                if (!confirm(question)) return;
+                redeemBtn.disabled = true;
+                try {
+                    await loyaltyRequest('POST', `/api/v1/vouchers/${encodeURIComponent(v.code)}/redeem`, {
+                        amount_kop: flower.bouquet_kop,
+                        lead_id: leadId,
+                        comment: commentInput.value.trim(),
+                        actor: getCurrentManagerName(),
+                        idempotency_key: redeemKey
+                    });
+                    showNotification(`Букет отмечен. Осталось ${left} из ${flower.bouquets_total}`, 'success');
+                    if (onChange) onChange();
+                } catch (error) {
+                    // Как у обычного списания: новый ключ - только после отказа сервиса (4xx).
+                    if (error.status && error.status < 500) redeemKey = 'amo:redeem:' + vxUuid();
+                    showNotification(error.message, 'error');
+                    redeemBtn.disabled = false;
+                }
+            };
+        }
+
+        if (canRedeemHere && !flower) {
             const amountInput = container.querySelector('[data-vx="amount"]');
             const commentInput = container.querySelector('[data-vx="comment"]');
             const hint = container.querySelector('[data-vx="hint"]');
@@ -5892,8 +5969,12 @@
             if (leadId && o.lead_id === leadId && (o.type === 'redeem' || o.type === 'refund')) leadNet -= o.amount_kop;
         });
 
+        const flower = v.flower || null;
         const cfg = {
-            refund: {
+            refund: flower ? {
+                title: 'Вернуть букет', submit: 'Вернуть букет', path: 'refund', lead: true, bouquet: true,
+                note: `Если доставку отменили: на подписку вернётся один букет (${formatKop(flower.bouquet_kop)}). Если указана сделка - только списанный в ней.`
+            } : {
                 title: 'Возврат на баланс', submit: 'Вернуть', path: 'refund', amount: true, lead: true,
                 defaultKop: leadNet > 0 ? leadNet : v.spent_kop,
                 note: 'Вернуть можно не больше, чем списано. Если указана сделка - не больше, чем списано в ней.'
@@ -5965,6 +6046,11 @@
                 body.amount_kop = kop;
                 body.idempotency_key = key;
                 question = `${cfg.submit} ${formatKop(kop)} (${v.kind_title.toLowerCase()} ${v.code})?`;
+            }
+            if (cfg.bouquet) {
+                body.amount_kop = flower.bouquet_kop;
+                body.idempotency_key = key;
+                question = `Вернуть один букет (${formatKop(flower.bouquet_kop)}) на подписку ${v.code}?`;
             }
             if (cfg.lead) {
                 const lead = parseInt(box.querySelector('[data-f="lead"]').value, 10);
@@ -6094,6 +6180,19 @@
         const idemKey = 'amo:issue:' + vxUuid(); // повторный клик не выпустит второй номер
         const { body, close } = openVxModal();
         const isWedding = kind.key === 'wedding_subscription';
+        const isFlower = kind.key === 'flower_subscription';
+        let tiers = [];
+        if (isFlower) {
+            // Тарифы и цены - из сервиса, в скрипте их копии нет.
+            try {
+                tiers = (await loyaltyRequest('GET', '/api/v1/flower-tiers')).tiers || [];
+            } catch (e) {
+                showNotification('Не удалось получить тарифы подписки: ' + e.message, 'error');
+                return;
+            }
+        }
+        const tomorrow = new Date(Date.now() + 86400000);
+        const tomorrowYmd = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
 
         body.innerHTML = `
             <div>
@@ -6101,7 +6200,17 @@
                 <div class="pcx-vx-muted">${leadId ? 'Сделка №' + leadId + '. ' : ''}Номер сгенерируется автоматически.</div>
             </div>
             <div class="pcx-vx-form">
-                <div class="pcx-vx-field">
+                ${isFlower ? `
+                    <div class="pcx-vx-field pcx-vx-field--wide">
+                        <label>Тариф</label>
+                        ${tiers.map((t, i) => `<label class="pcx-vx-check"><input type="radio" name="vx-flower-tier" data-f="tier" value="${escHtml(t.tier)}"${i === 1 ? ' checked' : ''}><span>${vxFlowerTierText(t)}</span></label>`).join('')}
+                    </div>
+                    <div class="pcx-vx-field">
+                        <label>Первая доставка</label>
+                        <input type="date" data-f="start_date" value="${tomorrowYmd}">
+                        <div class="pcx-vx-muted">Дальше - раз в неделю в тот же день</div>
+                    </div>` : ''}
+                <div class="pcx-vx-field"${isFlower ? ' style="display:none"' : ''}>
                     <label>${isWedding ? 'Начальная сумма, ₽' : 'Сумма, ₽'}</label>
                     <input type="text" inputmode="decimal" data-f="amount" placeholder="${isWedding ? '0' : '3000'}">
                     ${isWedding ? '<div class="pcx-vx-muted">Можно оставить 0 - подписку пополнят гости</div>' : ''}
@@ -6118,11 +6227,6 @@
                     <label>${isWedding ? 'Пара' : 'Кому (получатель)'}</label>
                     <input type="text" data-f="recipient" placeholder="${isWedding ? 'Анна и Сергей' : 'Необязательно'}">
                 </div>
-                ${kind.key === 'flower_subscription' ? `
-                    <div class="pcx-vx-field pcx-vx-field--wide">
-                        <label>График доставок</label>
-                        <input type="text" data-f="schedule" placeholder="Например, букет раз в неделю по пятницам">
-                    </div>` : ''}
                 ${isWedding ? `
                     <div class="pcx-vx-field">
                         <label>Дата свадьбы</label>
@@ -6134,7 +6238,7 @@
                         <div class="pcx-vx-muted">Точка «Для фамилия» и многоразовый QR на счёт подписок. После выпуска можно сразу скачать табличку для гостей.</div>
                     </div>
                     ${vxSbpAutoFieldsHtml('')}` : ''}
-                ${kind.key !== 'certificate' ? `
+                ${isWedding ? `
                     <div class="pcx-vx-field pcx-vx-field--wide" data-f="manual-merchant">
                         <label>Торговая точка СБП (для оплат по QR)</label>
                         <input type="text" data-f="merchant" placeholder="MA0004772653" autocomplete="off" spellcheck="false">
@@ -6157,7 +6261,7 @@
 
         const field = (name) => body.querySelector(`[data-f="${name}"]`);
         field('cancel').onclick = close;
-        field('amount').focus();
+        if (!isFlower) field('amount').focus();
         const autoOn = () => !!(field('auto') && field('auto').checked);
         if (field('auto')) {
             vxBindSbpAutoFields(body);
@@ -6172,7 +6276,18 @@
         field('submit').onclick = async () => {
             const errBox = field('error');
             const rawAmount = field('amount').value.trim();
-            const kop = rawAmount === '' && isWedding ? 0 : rubToKop(rawAmount);
+            const tierEl = body.querySelector('[data-f="tier"]:checked');
+            const tier = isFlower && tierEl ? tiers.find(t => t.tier === tierEl.value) : null;
+            if (isFlower && !tier) {
+                errBox.innerHTML = vxNote('warn', 'Выберите тариф');
+                return;
+            }
+            if (isFlower && !field('start_date').value) {
+                errBox.innerHTML = vxNote('warn', 'Укажите дату первой доставки');
+                field('start_date').focus();
+                return;
+            }
+            const kop = tier ? tier.price_kop : (rawAmount === '' && isWedding ? 0 : rubToKop(rawAmount));
             if (!isFinite(kop) || kop < 0 || (!isWedding && kop === 0)) {
                 errBox.innerHTML = vxNote('warn', 'Укажите сумму больше нуля');
                 field('amount').focus();
@@ -6199,10 +6314,12 @@
                 return;
             }
             const meta = {};
-            if (field('schedule') && field('schedule').value.trim()) meta.schedule = field('schedule').value.trim();
             if (field('wedding_date') && field('wedding_date').value) meta.wedding_date = field('wedding_date').value;
 
-            if (!confirm(`Выпустить: ${kind.title.toLowerCase()} на ${formatKop(kop)}?` +
+            const what = tier
+                ? `цветочная подписка ${tier.tier} на ${formatKop(kop)}, первая доставка ${vxPlanDate(field('start_date').value)}`
+                : `${kind.title.toLowerCase()} на ${formatKop(kop)}`;
+            if (!confirm(`Выпустить: ${what}?` +
                 (sbpFields ? `\nИ создать в Точке точку «${sbpFields.brand_name}» с QR для гостей.` : ''))) return;
 
             field('submit').disabled = true;
@@ -6216,6 +6333,8 @@
                     contact_id: ctx.contactId || 0,
                     lead_id: leadId || 0,
                     sbp_merchant_id: merchant,
+                    flower_tier: tier ? tier.tier : '',
+                    start_date: tier ? field('start_date').value : '',
                     recipient_name: field('recipient').value.trim(),
                     message: field('message').value.trim(),
                     comment: field('comment').value.trim(),
@@ -6227,10 +6346,11 @@
                 body.innerHTML = `
                     <div>
                         <h3 class="pcx-vx-modal__title">${escHtml(v.kind_title)} выпущен${kind.key === 'certificate' ? '' : 'а'}</h3>
-                        <div class="pcx-vx-muted">${formatKop(v.nominal_kop)}${v.buyer_name ? ', ' + escHtml(v.buyer_name) : ''}${v.buyer_phone ? ', ' + escHtml(vxPhone(v.buyer_phone)) : ''}</div>
+                        <div class="pcx-vx-muted">${v.flower ? 'Тариф ' + escHtml(v.flower.tier) + ', ' : ''}${formatKop(v.nominal_kop)}${v.buyer_name ? ', ' + escHtml(v.buyer_name) : ''}${v.buyer_phone ? ', ' + escHtml(vxPhone(v.buyer_phone)) : ''}</div>
                     </div>
                     <div class="pcx-vx-codebig">${escHtml(v.code)}</div>
                     <div data-f="sbp-status"></div>
+                    ${v.flower ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--primary" data-f="flower-pdf">Скачать PDF</button><span class="pcx-vx-muted">карточка в подарок, QR ведёт на проверку остатка букетов</span></div>` : ''}
                     <div class="pcx-vx-actions">
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Скопировать номер</button>
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-text">Скопировать текст для клиента</button>
@@ -6258,6 +6378,14 @@
                         }
                     };
                     runSbp();
+                }
+                if (field('flower-pdf')) {
+                    const pdfBtn = field('flower-pdf');
+                    pdfBtn.onclick = async () => {
+                        pdfBtn.disabled = true;
+                        try { await loyaltyDownload('/api/v1/vouchers/' + encodeURIComponent(v.code) + '/pdf', 'Цветочная подписка ' + v.code + '.pdf'); } catch (e) { showNotification('PDF не получился: ' + e.message, 'error'); }
+                        pdfBtn.disabled = false;
+                    };
                 }
                 field('copy-code').onclick = () => vxCopy(v.code);
                 field('copy-text').onclick = () => vxCopy(vxClientText(v));
@@ -6396,7 +6524,7 @@
                             <td class="pcx-vx-nowrap">${vxDate(v.created_at)}${v.lead_id ? `<div class="pcx-vx-muted">${vxLeadLink(v.lead_id)}</div>` : ''}</td>
                             <td class="pcx-vx-num">${formatKop(v.nominal_kop + (v.topup_kop || 0))}</td>
                             <td class="pcx-vx-num">${formatKop(v.spent_kop)}</td>
-                            <td class="pcx-vx-num"><b>${formatKop(v.balance_kop)}</b></td>
+                            <td class="pcx-vx-num"><b>${formatKop(v.balance_kop)}</b>${v.flower ? `<div class="pcx-vx-muted">${escHtml(v.flower.tier)}: ${v.flower.bouquets_left} из ${v.flower.bouquets_total}</div>` : ''}</td>
                             <td>${vxBadge(v)}</td>
                         </tr>`).join('')}
                     </tbody>
