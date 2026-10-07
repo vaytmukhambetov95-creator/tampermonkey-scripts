@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.8.0
+// @version      3.8.1
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -30,8 +30,9 @@
     const CACHE_DURATION = 10 * 60 * 1000;
     const ADMIN_PASSWORD = '4567';
     // Версия берётся из шапки (@version): константу с 3.5.0 забывали поднимать, и плашка
-    // «Вышла новая версия» висела у всех. Запасное значение - только на случай, если GM.info нет.
-    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info && GM.info.script && GM.info.script.version) || '3.8.0';
+    // «Вышла новая версия» висела у всех. Без GM.info версии нет, и проверка обновлений
+    // просто не запускается: вторая копия номера версии в коде снова отстала бы от шапки.
+    const SCRIPT_VERSION = (typeof GM !== 'undefined' && GM.info && GM.info.script && GM.info.script.version) || null;
 
     // Категории причин для начисления бонусов
     const REASON_CATEGORIES = {
@@ -48,6 +49,13 @@
     
     let promoCodesCache = [];
     let amoCRMPromoCodes = [];
+    // Последняя ошибка загрузки списков вкладки «Промокоды»: показывается над списком,
+    // иначе тихая загрузка при сбое оставляла пустой список без объяснения причины
+    const promoListErrors = { base: '', amo: '' };
+    // Коды, которые сейчас добавляются в поле сделки: перерисовка списка не должна
+    // снова включать их кнопку «+ Добавить в amoCRM»
+    const amoAddInFlight = new Set();
+    let promoFieldQueue = Promise.resolve();
     let webAppUrl = '';
     let currentLeadBudget = 0;
     let isAdminAuthorized = false;
@@ -194,6 +202,7 @@
     }
 
     async function checkForScriptUpdate() {
+        if (!SCRIPT_VERSION) return;
         try {
             const checkedAt = parseInt(localStorage.getItem(UPDATE_CHECKED_KEY)) || 0;
             if (Date.now() - checkedAt < UPDATE_CHECK_INTERVAL) return;
@@ -1957,14 +1966,15 @@
 
         attachDeleteButtonsListeners();
 
-        // Списки подгружаются сами (с 3.8.0; раньше - кнопками в «Настройках»).
-        // База - с учётом кэша на 10 минут, поле сделки amoCRM - каждый раз, это свой домен.
+        // Списки подгружаются сами (с 3.8.0; раньше - кнопками в «Настройках»), оба с кэшем
+        // на 10 минут; в сеть без кэша - только кнопкой «Обновить». Ошибки тихой загрузки
+        // видны над самим списком (promoListErrors), кнопка «Обновить» дублирует их уведомлением.
         syncWithGoogleSheet(true);
-        syncWithAmoCRM(true);
+        syncWithAmoCRM(true, false);
         document.getElementById('refresh-promo-lists-btn').onclick = async (e) => {
             const btn = e.currentTarget;
             btn.disabled = true;
-            await Promise.all([syncWithGoogleSheet(false, true), syncWithAmoCRM(true)]);
+            await Promise.all([syncWithGoogleSheet(false, true), syncWithAmoCRM(false, true)]);
             btn.disabled = false;
         };
 
@@ -1977,20 +1987,25 @@
         }
     }
 
+    function renderListError(message) {
+        if (!message) return '';
+        return `<div style="padding: 10px 12px; margin-bottom: 10px; background: #FBEAEA; color: #B23434; border-radius: 10px; font-size: 12px; font-weight: 600; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Не удалось загрузить список: ${escHtml(message)}</div>`;
+    }
+
+    function renderEmptyList() {
+        return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список пуст. Нажмите «Обновить» вверху вкладки.</div>`;
+    }
+
     function renderGooglePromosList() {
+        const errorBlock = renderListError(promoListErrors.base);
         if (promoCodesCache.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список пуст. Нажмите «Обновить» вверху вкладки.</div>`;
+            return errorBlock || renderEmptyList();
         }
 
-        // Создаём Set кодов из amoCRM для быстрой проверки
-        const amoCRMCodesSet = new Set(
-            amoCRMPromoCodes.map(p => {
-                const parsed = parseAmoCRMPromoCode(p.value);
-                return parsed.code.toUpperCase();
-            })
-        );
+        // Сравниваем по коду без описания в скобках: вариант поля «ЛЕТО (скидка 10%)» - это код ЛЕТО
+        const amoCRMCodesSet = new Set(amoCRMPromoCodes.map(p => promoCodeKey(p.value)));
 
-        return promoCodesCache.map((promo, index) => {
+        return errorBlock + promoCodesCache.map((promo, index) => {
             const discountText = promo.discountType === 'процент' ? `${promo.discount}%` : `${promo.discount} ₽`;
             const statusColor = promo.status === 'активен' ? '#2E9E63' : '#9C9CA8';
             const expiryText = promo.expiryDate ? `до ${formatDate(promo.expiryDate)}` : 'Без срока';
@@ -2001,11 +2016,12 @@
             const totalUsages = phoneBindings.reduce((sum, b) => sum + (b.usages ? b.usages.length : 0), 0);
 
             // Проверяем, есть ли промокод в amoCRM
-            const isInAmoCRM = amoCRMCodesSet.has(promo.code.toUpperCase());
+            const isInAmoCRM = amoCRMCodesSet.has(promoCodeKey(promo.code));
+            const isAdding = amoAddInFlight.has(promoCodeKey(promo.code));
             const missingBadge = !isInAmoCRM ? `
                 <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #FCF4E8; border-radius: 10px;">
                     <span style="font-size: 12px; color: #A85F0F; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; font-weight: 600;">Нет в amoCRM</span>
-                    <button class="add-to-amocrm-btn" data-promo-code="${promo.code}" style="
+                    <button class="add-to-amocrm-btn" data-promo-code="${promo.code}"${isAdding ? ' disabled' : ''} style="
                         padding: 4px 10px;
                         background: #E6407A;
                         color: white;
@@ -2017,7 +2033,7 @@
                         font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
                         transition: all 0.2s;
                         margin-left: auto;
-                    ">+ Добавить в amoCRM</button>
+                    ">${isAdding ? 'Добавляю...' : '+ Добавить в amoCRM'}</button>
                 </div>
             ` : '';
 
@@ -2073,11 +2089,36 @@
     }
 
     function renderAmoCRMPromosList() {
+        const errorBlock = renderListError(promoListErrors.amo);
         if (amoCRMPromoCodes.length === 0) {
-            return `<div style="text-align: center; padding: 40px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">Список пуст. Нажмите «Обновить» вверху вкладки.</div>`;
+            return errorBlock || renderEmptyList();
         }
 
-        return amoCRMPromoCodes.map(promo => {
+        // Варианты поля в базу больше не выгружаются (с 3.8.0), поэтому код, заведённый прямо
+        // в настройках поля, в базе отсутствует: проверка и сайт его не знают. Помечаем такие.
+        // Пока список базы не загружен, плашку не показываем - иначе она висела бы у всех.
+        const baseCodesSet = promoCodesCache.length ? new Set(promoCodesCache.map(p => promoCodeKey(p.code))) : null;
+
+        return errorBlock + amoCRMPromoCodes.map(promo => {
+            const key = promoCodeKey(promo.value);
+            const isMissingInBase = baseCodesSet && !baseCodesSet.has(key) && key !== REPLACEMENT_CODE.toUpperCase();
+            const missingBadge = isMissingInBase ? `
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; background: #FCF4E8; border-radius: 10px;">
+                    <span style="font-size: 12px; color: #A85F0F; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; font-weight: 600;">Нет в базе - проверка и сайт его не знают</span>
+                    ${isAdminAuthorized ? `<button class="add-to-base-btn" data-promo-code="${escHtml(parseAmoCRMPromoCode(promo.value).code)}" style="
+                        padding: 4px 10px;
+                        background: #E6407A;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-size: 11px;
+                        font-weight: 600;
+                        font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+                        margin-left: auto;
+                    ">Завести в базе</button>` : ''}
+                </div>
+            ` : '';
             return `
                 <div class="amocrm-promo-card" style="background: white; border: 1px solid #E7E7EC; border-radius: 10px; padding: 15px; margin-bottom: 10px; transition: all 0.2s; position: relative;" 
                      onmouseover="this.style.borderColor='#E6407A'; this.style.boxShadow='0 4px 12px rgba(255, 158, 196, 0.3)'" 
@@ -2107,6 +2148,7 @@
                         <div style="font-size: 16px; font-weight: 600; color: #E6407A; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">${promo.value}</div>
                         <div style="font-size: 12px; color: #9C9CA8; font-family: Manrope, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;">ID: ${promo.id}</div>
                     </div>
+                    ${missingBadge}
                 </div>
             `;
         }).join('');
@@ -2324,6 +2366,7 @@
                 const code = btn.getAttribute('data-promo-code');
                 console.log('Нажата кнопка добавления в amoCRM:', code);
 
+                if (amoAddInFlight.has(promoCodeKey(code))) return;
                 btn.disabled = true;
                 btn.textContent = 'Добавляю...';
 
@@ -2334,9 +2377,26 @@
                 } catch (error) {
                     console.error('Ошибка добавления в amoCRM:', error);
                     showNotification(`Ошибка: ${error.message}`, 'error');
-                    btn.disabled = false;
-                    btn.textContent = '+ Добавить в amoCRM';
+                    // Кнопка могла уже смениться при перерисовке - возвращаем её через список
+                    rerenderPromoLists();
                 }
+            });
+        });
+
+        // «Завести в базе» у варианта поля, которого нет в базе: открываем форму с этим кодом.
+        // Галочку amoCRM снимаем - в поле сделки код уже есть.
+        document.querySelectorAll('.add-to-base-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.getAttribute('data-promo-code');
+                switchTab('add');
+                const codeInput = document.getElementById('new-promo-code');
+                if (!codeInput) return;
+                codeInput.value = code;
+                document.getElementById('new-promo-to-amocrm').checked = false;
+                showResult(document.getElementById('add-promo-result'),
+                    `Код <strong>${escHtml(code)}</strong> уже есть в поле сделки. Укажите скидку и условия и сохраните - он появится в базе и на сайте.`, 'info');
+                document.getElementById('new-promo-discount').focus();
             });
         });
     }
@@ -2636,10 +2696,7 @@
             }
             const leadId = leadIdMatch[1];
 
-            const promoEnumItem = amoCRMPromoCodes.find(p => 
-                p.value.toUpperCase() === promo.code.toUpperCase() || 
-                p.value.toUpperCase().startsWith(promo.code.toUpperCase())
-            );
+            const promoEnumItem = findPromoEnumItem(promo.code);
 
             if (!promoEnumItem) {
                 throw new Error('Этого промокода нет в поле «Промокод» сделки amoCRM. Добавьте его кнопкой «+ Добавить в amoCRM» во вкладке «Промокоды».');
@@ -2739,83 +2796,97 @@
         const toAmoCRM = document.getElementById('new-promo-to-amocrm').checked;
         const codeHtml = `<strong>${escHtml(code)}</strong>`;
 
+        // Кнопка заблокирована до очистки формы: раньше она освобождалась сразу после ответа
+        // базы, повторный клик слал тот же add, и «уже есть в базе» затирало «сохранён».
         saveBtn.disabled = true;
-        showResult(resultDiv, 'Сохраняю промокод...', 'info');
-
         try {
-            const response = await makeGoogleScriptRequest('POST', {
-                action: 'add',
-                code: code,
-                type: type,
-                discount: parseFloat(discount),
-                discountType: discountType,
-                minOrderAmount: minAmount ? parseFloat(minAmount) : '',
-                expiryDate: expiry,
-                maxUsages: maxUsage ? parseInt(maxUsage) : '',
-                status: 'активен',
-                phoneBindings: phoneBindings.length > 0 ? phoneBindings : undefined,
-                description: description
-            });
+            showResult(resultDiv, 'Сохраняю промокод...', 'info');
+            try {
+                const response = await makeGoogleScriptRequest('POST', {
+                    action: 'add',
+                    code: code,
+                    type: type,
+                    discount: parseFloat(discount),
+                    discountType: discountType,
+                    minOrderAmount: minAmount ? parseFloat(minAmount) : '',
+                    expiryDate: expiry,
+                    maxUsages: maxUsage ? parseInt(maxUsage) : '',
+                    status: 'активен',
+                    phoneBindings: phoneBindings.length > 0 ? phoneBindings : undefined,
+                    description: description
+                });
 
-            if (!response.success) {
-                const reason = response.error === 'Promo code already exists'
-                    ? `промокод ${code} уже есть в базе`
-                    : (response.error || 'не удалось добавить промокод');
-                showResult(resultDiv, `Ошибка: ${escHtml(reason)}`, 'error');
+                if (!response.success) {
+                    const reason = response.error === 'Promo code already exists'
+                        ? `промокод ${code} уже есть в базе`
+                        : (response.error || 'не удалось добавить промокод');
+                    showResult(resultDiv, `Ошибка: ${escHtml(reason)}`, 'error');
+                    return;
+                }
+            } catch (error) {
+                console.error('Ошибка добавления промокода:', error);
+                showResult(resultDiv, `Ошибка: ${escHtml(error.message)}`, 'error');
                 return;
             }
-        } catch (error) {
-            console.error('Ошибка добавления промокода:', error);
-            showResult(resultDiv, `Ошибка: ${escHtml(error.message)}`, 'error');
-            return;
+
+            let amoNote = '';
+            if (toAmoCRM) {
+                showResult(resultDiv, `Промокод ${codeHtml} сохранён. Добавляю его в поле сделки amoCRM...`, 'info');
+                try {
+                    await addPromoCodeToAmoCRM(code);
+                    amoNote = ' и добавлен в поле «Промокод» сделки';
+                } catch (error) {
+                    if (/уже существует/i.test(error.message)) {
+                        amoNote = ', в поле «Промокод» сделки он уже был';
+                    } else {
+                        console.error('Ошибка добавления в amoCRM:', error);
+                        showResult(resultDiv, `Промокод ${codeHtml} сохранён, но в поле сделки amoCRM не добавился: ${escHtml(error.message)}. Добавьте его кнопкой «+ Добавить в amoCRM» во вкладке «Промокоды».`, 'warning');
+                        await syncWithGoogleSheet(true, true);
+                        return;
+                    }
+                }
+            }
+
+            showResult(resultDiv, `Промокод ${codeHtml} сохранён${amoNote}.`, 'success');
+            await syncWithGoogleSheet(true, true);
+            await clearPromoForm();
         } finally {
             saveBtn.disabled = false;
         }
-
-        let amoNote = '';
-        if (toAmoCRM) {
-            saveBtn.disabled = true;
-            showResult(resultDiv, `Промокод ${codeHtml} сохранён. Добавляю его в поле сделки amoCRM...`, 'info');
-            try {
-                await addPromoCodeToAmoCRM(code);
-                amoNote = ' и добавлен в поле «Промокод» сделки';
-            } catch (error) {
-                if (/уже существует/i.test(error.message)) {
-                    amoNote = ', в поле «Промокод» сделки он уже был';
-                } else {
-                    console.error('Ошибка добавления в amoCRM:', error);
-                    showResult(resultDiv, `Промокод ${codeHtml} сохранён, но в поле сделки amoCRM не добавился: ${escHtml(error.message)}. Добавьте его кнопкой «+ Добавить в amoCRM» во вкладке «Промокоды».`, 'warning');
-                    await syncWithGoogleSheet(true, true);
-                    return;
-                }
-            } finally {
-                saveBtn.disabled = false;
-            }
-        }
-
-        showResult(resultDiv, `Промокод ${codeHtml} сохранён${amoNote}.`, 'success');
-        await syncWithGoogleSheet(true, true);
-        clearPromoForm();
     }
 
     function clearPromoForm() {
-        setTimeout(() => {
-            document.getElementById('new-promo-code').value = '';
-            document.getElementById('new-promo-discount').value = '';
-            document.getElementById('new-promo-min-amount').value = '';
-            document.getElementById('new-promo-expiry').value = '';
-            document.getElementById('new-promo-max-usage').value = '';
-            document.getElementById('new-promo-description').value = '';
-            document.getElementById('add-promo-result').style.display = 'none';
+        return new Promise(resolve => setTimeout(() => {
+            // Пока ждали, могли уйти с вкладки - тогда формы уже нет
+            if (document.getElementById('new-promo-code')) {
+                document.getElementById('new-promo-code').value = '';
+                document.getElementById('new-promo-discount').value = '';
+                document.getElementById('new-promo-min-amount').value = '';
+                document.getElementById('new-promo-expiry').value = '';
+                document.getElementById('new-promo-max-usage').value = '';
+                document.getElementById('new-promo-description').value = '';
+                document.getElementById('add-promo-result').style.display = 'none';
 
-            // Очищаем список телефонов
-            window.promoPhoneBindings = [];
-            renderPhoneBindingsList();
-        }, 2000);
+                // Очищаем список телефонов
+                window.promoPhoneBindings = [];
+                renderPhoneBindingsList();
+            }
+            resolve();
+        }, 2000));
     }
 
     async function addPromoCodeToAmoCRM(code) {
         console.log('addPromoCodeToAmoCRM вызвана с кодом:', code);
+        const key = promoCodeKey(code);
+        amoAddInFlight.add(key);
+        try {
+            return await withPromoFieldLock(() => addPromoCodeToAmoCRMLocked(code));
+        } finally {
+            amoAddInFlight.delete(key);
+        }
+    }
+
+    async function addPromoCodeToAmoCRMLocked(code) {
         const fieldUrl = `${window.location.origin}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
 
         console.log('Получаю текущие значения поля...');
@@ -2838,7 +2909,8 @@
         const existingEnums = fieldData.enums || [];
         console.log('Существующие промокоды:', existingEnums.length);
         
-        const enumExists = existingEnums.some(e => e.value.toUpperCase() === code.toUpperCase());
+        // Вариант «ЛЕТО (скидка 10%)» - тот же код ЛЕТО: точное сравнение пропускало его и плодило дубль
+        const enumExists = existingEnums.some(e => promoCodeKey(e.value) === promoCodeKey(code));
         if (enumExists) {
             console.warn('Промокод уже существует');
             throw new Error('Промокод уже существует в amoCRM');
@@ -2896,7 +2968,7 @@
     function promoBackendHttpError(status) {
         if (isLoyaltyGasUrl(webAppUrl) && (status === 401 || status === 403)) {
             return new Error(status === 401
-                ? 'Нужен токен доступа - укажите его во вкладке «Настройки», раздел сервиса сертификатов'
+                ? 'Нужен токен доступа - укажите его во вкладке «Настройки», раздел «Доступ к сервису лояльности»'
                 : 'Токен не подходит для промокодов - нужен токен менеджера или администратора');
         }
         return new Error(`HTTP ${status}`);
@@ -2991,15 +3063,20 @@
             if (response.promoCodes) {
                 promoCodesCache = response.promoCodes;
                 cachePromoCodes(promoCodesCache);
+                promoListErrors.base = '';
                 updateStatistics();
                 rerenderPromoLists();
 
                 if (!silent) showNotification(`Загружено промокодов: ${promoCodesCache.length}`, 'success');
-            } else if (!silent) {
-                showNotification('Ошибка загрузки промокодов: ' + (response.error || 'пустой ответ сервера'), 'error');
+            } else {
+                promoListErrors.base = response.error || 'пустой ответ сервера';
+                rerenderPromoLists();
+                if (!silent) showNotification('Ошибка загрузки промокодов: ' + promoListErrors.base, 'error');
             }
         } catch (error) {
             console.error('Ошибка синхронизации:', error);
+            promoListErrors.base = error.message;
+            rerenderPromoLists();
             if (!silent) showNotification('Ошибка загрузки промокодов: ' + error.message, 'error');
         }
     }
@@ -3020,8 +3097,44 @@
         };
     }
 
-    async function syncWithAmoCRM(silent = false) {
-        if (!silent) showNotification('Загружаю промокоды из amoCRM...', 'info');
+    // Ключ сравнения кода с вариантом поля: «ЛЕТО (скидка 10%)», «лето» и «ЛЕТО» - один код
+    function promoCodeKey(value) {
+        return parseAmoCRMPromoCode(String(value || '')).code.toUpperCase();
+    }
+
+    // Вариант поля для кода: сначала точное совпадение по ключу. Запасной вариант - значение,
+    // которое начинается с кода и дальше идёт не буква и не цифра («ЛЕТО - 10%»). Голый
+    // startsWith отдавал коду SALE вариант SALE10, если тот стоял в списке раньше.
+    function findPromoEnumItem(code) {
+        const key = promoCodeKey(code);
+        const exact = amoCRMPromoCodes.find(p => promoCodeKey(p.value) === key);
+        if (exact) return exact;
+        return amoCRMPromoCodes.find(p => {
+            const value = String(p.value || '').toUpperCase();
+            return value.startsWith(key) && !/^[\p{L}\p{N}]/u.test(value.slice(key.length));
+        });
+    }
+
+    // Запись в поле промокода - строго по одной. PATCH шлёт полный список вариантов, и amoCRM
+    // удаляет те, которых в нём нет: две параллельные записи по одному и тому же GET теряли
+    // вариант, добавленный первой (а с ним и значение в сделках).
+    function withPromoFieldLock(task) {
+        const run = promoFieldQueue.then(task, task);
+        promoFieldQueue = run.catch(() => {});
+        return run;
+    }
+
+    // silent - не показывать уведомление об ошибке (она всё равно видна над списком).
+    // forceRefresh=false - взять свежий кэш (10 минут) без запроса в amoCRM.
+    async function syncWithAmoCRM(silent = false, forceRefresh = true) {
+        if (!forceRefresh) {
+            const fresh = getCachedAmoCRMPromoCodes(true);
+            if (fresh) {
+                amoCRMPromoCodes = fresh;
+                updateStatistics();
+                return;
+            }
+        }
 
         try {
             const apiUrl = `${window.location.origin}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
@@ -3047,37 +3160,43 @@
                 }));
                 
                 cacheAmoCRMPromoCodes(amoCRMPromoCodes);
-                
-                if (!silent) showNotification(`Загружено ${amoCRMPromoCodes.length} промокодов из amoCRM`, 'success');
+                promoListErrors.amo = '';
                 updateStatistics();
-                
+
                 // Обратно в базу варианты поля больше не выгружаются (с 3.8.0): выгрузка
-                // заводила каждый вариант как код со скидкой 0.
+                // заводила каждый вариант как код со скидкой 0. Недостающие в базе помечает список.
                 rerenderPromoLists();
             } else {
-                if (!silent) showNotification('Не удалось получить список промокодов', 'warning');
+                throw new Error('в ответе amoCRM нет списка вариантов');
             }
         } catch (error) {
             console.error('Ошибка загрузки из amoCRM:', error);
-            if (!silent) showNotification('Ошибка загрузки из amoCRM', 'error');
+            promoListErrors.amo = error.message;
+            rerenderPromoLists();
+            if (!silent) showNotification('Ошибка загрузки из amoCRM: ' + error.message, 'error');
         }
     }
 
     function cacheAmoCRMPromoCodes(promoCodes) {
         try {
-            localStorage.setItem('amocrm_promo_codes_cache', JSON.stringify(promoCodes));
+            localStorage.setItem('amocrm_promo_codes_cache', JSON.stringify({ promoCodes, timestamp: Date.now() }));
             console.log('amoCRM промокоды закэшированы:', promoCodes.length);
         } catch (error) {
             console.error('Ошибка кэширования amoCRM промокодов:', error);
         }
     }
 
-    function getCachedAmoCRMPromoCodes() {
+    // checkExpiration=true - только свежий кэш (CACHE_DURATION). Старый формат (голый массив,
+    // до 3.8.1) годится лишь для показа: времени у него нет.
+    function getCachedAmoCRMPromoCodes(checkExpiration = false) {
         try {
             const cached = localStorage.getItem('amocrm_promo_codes_cache');
             if (cached) {
-                const promoCodes = JSON.parse(cached);
-                console.log('Загружено из кэша amoCRM промокодов:', promoCodes.length);
+                const data = JSON.parse(cached);
+                const promoCodes = Array.isArray(data) ? data : data.promoCodes;
+                const timestamp = Array.isArray(data) ? 0 : data.timestamp;
+                if (!Array.isArray(promoCodes)) return null;
+                if (checkExpiration && Date.now() - timestamp >= CACHE_DURATION) return null;
                 return promoCodes;
             }
         } catch (error) {
@@ -3832,38 +3951,7 @@
         showNotification('Удаляю промокод...', 'info');
 
         try {
-            const domain = window.location.hostname;
-            const fieldUrl = `https://${domain}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
-
-            const getResponse = await fetch(fieldUrl, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!getResponse.ok) {
-                throw new Error(`Ошибка получения поля: HTTP ${getResponse.status}`);
-            }
-
-            const fieldData = await getResponse.json();
-            const existingEnums = fieldData.enums || [];
-
-            const updatedEnums = existingEnums.filter(e => e.id !== enumId);
-
-            const updateResponse = await fetch(fieldUrl, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    enums: updatedEnums
-                })
-            });
-
-            if (!updateResponse.ok) {
-                throw new Error(`Ошибка удаления промокода: HTTP ${updateResponse.status}`);
-            }
+            await withPromoFieldLock(() => removePromoEnum(enumId));
 
             amoCRMPromoCodes = amoCRMPromoCodes.filter(p => p.id !== enumId);
             cacheAmoCRMPromoCodes(amoCRMPromoCodes);
@@ -3895,6 +3983,41 @@
         } catch (error) {
             console.error('Ошибка удаления из amoCRM:', error);
             showNotification(`Ошибка: ${error.message}`, 'error');
+        }
+    }
+
+    // Удаление варианта из поля промокода (вызывать только через withPromoFieldLock)
+    async function removePromoEnum(enumId) {
+        const fieldUrl = `${window.location.origin}/api/v4/leads/custom_fields/${PROMO_FIELD_ID}`;
+
+        const getResponse = await fetch(fieldUrl, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!getResponse.ok) {
+            throw new Error(`Ошибка получения поля: HTTP ${getResponse.status}`);
+        }
+
+        const fieldData = await getResponse.json();
+        const existingEnums = fieldData.enums || [];
+
+        const updatedEnums = existingEnums.filter(e => e.id !== enumId);
+
+        const updateResponse = await fetch(fieldUrl, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                enums: updatedEnums
+            })
+        });
+
+        if (!updateResponse.ok) {
+            throw new Error(`Ошибка удаления промокода: HTTP ${updateResponse.status}`);
         }
     }
 
@@ -6377,6 +6500,7 @@
 
     function loadSettings() {
         localStorage.removeItem('promo_webapp_url');
+        localStorage.removeItem('promo_last_sync');   // после 3.8.0 его никто не читает
         webAppUrl = resolvePromoBackendUrl();
         isAdminAuthorized = localStorage.getItem('promo_admin_authorized') === 'true';
         const cachedPromos = getCachedPromoCodes();
@@ -6403,7 +6527,6 @@
             timestamp: Date.now()
         };
         localStorage.setItem('promo_codes_cache', JSON.stringify(cacheData));
-        localStorage.setItem('promo_last_sync', new Date().toISOString());
     }
 
     function getCachedPromoCodes(checkExpiration = false) {
