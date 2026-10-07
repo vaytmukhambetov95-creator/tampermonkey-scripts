@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.9.2
+// @version      3.9.3
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -566,6 +566,7 @@
             #promo-codes-overlay .pcx-vx-field label { font-size: 12.5px; font-weight: 600 !important; color: var(--pcx-text-2); }
             .pcx-vx-field input, .pcx-vx-field textarea, .pcx-vx-field select { width: 100%; }
             .pcx-vx-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+            .pcx-vx-actions--center { justify-content: center; }
             .pcx-vx-codebig { padding: 18px; border-radius: 12px; background: var(--pcx-surface-2); text-align: center;
                 font-size: 28px; font-weight: 800; letter-spacing: 0.08em; color: var(--pcx-text); }
             @media (max-width: 640px) {
@@ -6351,7 +6352,7 @@
                     </div>
                     <div class="pcx-vx-codebig">${escHtml(v.code)}</div>
                     <div data-f="sbp-status"></div>
-                    <div class="pcx-vx-actions">
+                    <div class="pcx-vx-actions pcx-vx-actions--center">
                         ${v.flower ? '<button class="pcx-btn pcx-btn--ghost" data-f="flower-pdf" title="Карточка в подарок, QR ведёт на проверку остатка букетов">Скачать PDF</button>' : ''}
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Копировать номер</button>
                         <button class="pcx-btn pcx-btn--ghost" data-f="copy-text" title="Номер и условия - вставить в переписку с клиентом">Текст для клиента</button>
