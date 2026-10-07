@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.9.1
+// @version      3.9.2
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -6351,10 +6351,10 @@
                     </div>
                     <div class="pcx-vx-codebig">${escHtml(v.code)}</div>
                     <div data-f="sbp-status"></div>
-                    ${v.flower ? `<div class="pcx-vx-row"><button class="pcx-btn pcx-btn--primary" data-f="flower-pdf">Скачать PDF</button><span class="pcx-vx-muted">карточка в подарок, QR ведёт на проверку остатка букетов</span></div>` : ''}
                     <div class="pcx-vx-actions">
-                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Скопировать номер</button>
-                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-text">Скопировать текст для клиента</button>
+                        ${v.flower ? '<button class="pcx-btn pcx-btn--ghost" data-f="flower-pdf" title="Карточка в подарок, QR ведёт на проверку остатка букетов">Скачать PDF</button>' : ''}
+                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-code">Копировать номер</button>
+                        <button class="pcx-btn pcx-btn--ghost" data-f="copy-text" title="Номер и условия - вставить в переписку с клиентом">Текст для клиента</button>
                         <button class="pcx-btn pcx-btn--primary" data-f="open">Открыть карточку</button>
                     </div>`;
                 if (sbpFields) {
