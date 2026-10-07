@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.9.0
+// @version      3.9.1
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -384,12 +384,13 @@
                 outline: none !important;
                 transition: border-color 0.15s ease, box-shadow 0.15s ease;
             }
-            #promo-codes-overlay input:focus,
+            #promo-codes-overlay input:not([type="radio"]):not([type="checkbox"]):focus,
             #promo-codes-overlay select:focus,
             #promo-codes-overlay textarea:focus {
                 border-color: var(--pcx-accent) !important;
                 box-shadow: 0 0 0 3px var(--pcx-accent-soft) !important;
             }
+            /* кружки и галочки без подсветки: у системного кружка тень не скругляется и выходит квадрат */
             #promo-codes-overlay input::placeholder,
             #promo-codes-overlay textarea::placeholder { color: var(--pcx-text-3) !important; font-weight: 500 !important; }
 
