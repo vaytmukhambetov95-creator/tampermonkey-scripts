@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.9.3
+// @version      3.10.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -135,6 +135,12 @@
         `).join('');
         document.head.appendChild(style);
     }
+
+    // Токен менеджера сервиса лояльности. В публичной версии на GitHub здесь всегда пусто:
+    // сервис вписывает токен, когда отдаёт скрипт по секретной ссылке (/loyalty/us/<ключ>/...),
+    // и там же подменяет адрес обновлений на эту ссылку. Токен из «Настроек» главнее
+    // встроенного - так входят администраторы. Строку не менять: сервис ищет её дословно.
+    const LOYALTY_EMBEDDED_TOKEN = '';
 
     // Раз в час сверяем свою версию с той, что лежит на GitHub: менеджеру не надо
     // ни лезть в панель Tampermonkey, ни ждать суточной автопроверки.
@@ -2963,7 +2969,7 @@
 
     async function promoBackendHeaders(extra = {}) {
         if (!isLoyaltyGasUrl(webAppUrl)) return extra;
-        const token = String((await GM.getValue(LOYALTY_TOKEN_KEY, '')) || '').trim();
+        const { token } = await getLoyaltySettings();
         return token ? { ...extra, 'Authorization': 'Bearer ' + token } : extra;
     }
 
@@ -5201,8 +5207,9 @@
 
     async function getLoyaltySettings() {
         const url = (await GM.getValue(LOYALTY_URL_KEY, '')) || LOYALTY_DEFAULT_URL;
-        const token = await GM.getValue(LOYALTY_TOKEN_KEY, '');
-        return { url: String(url).replace(/\/+$/, ''), token: String(token || '').trim() };
+        const own = String((await GM.getValue(LOYALTY_TOKEN_KEY, '')) || '').trim();
+        // own - вставлен руками в «Настройках», embedded - вписан сервисом при раздаче
+        return { url: String(url).replace(/\/+$/, ''), token: own || LOYALTY_EMBEDDED_TOKEN, own, embedded: !!LOYALTY_EMBEDDED_TOKEN };
     }
 
     // Скачивание файла из сервиса (PDF сертификата) с токеном: ответ - blob, сохраняем через ссылку.
@@ -6545,7 +6552,10 @@
 
     async function renderLoyaltySettings(box) {
         if (!box) return;
-        const { url, token } = await getLoyaltySettings();
+        const { url, token, own, embedded } = await getLoyaltySettings();
+        const builtInNote = embedded
+            ? `<div class="pcx-vx-muted">Токен менеджера уже встроен в скрипт - вставлять ничего не нужно. Поле ниже - для администраторов: их токен главнее встроенного.</div>`
+            : '';
         box.innerHTML = `
             <section class="pcx-vx pcx-vx-block">
                 <h3 class="pcx-vx-block__title">Доступ к сервису лояльности</h3>
@@ -6556,11 +6566,12 @@
                 </div>
                 <div class="pcx-vx-field">
                     <label>Токен доступа</label>
-                    <input type="password" data-vx="token" value="${escHtml(token)}" placeholder="Вставьте токен" autocomplete="off">
+                    <input type="password" data-vx="token" value="${escHtml(own)}" placeholder="${embedded ? 'Встроенный токен менеджера' : 'Вставьте токен'}" autocomplete="off">
                 </div>
+                ${builtInNote}
                 <div class="pcx-vx-row">
                     <button class="pcx-btn pcx-btn--primary" data-vx="save">Сохранить и проверить</button>
-                    ${token ? '<button class="pcx-btn pcx-btn--ghost" data-vx="forget">Удалить токен</button>' : ''}
+                    ${own ? '<button class="pcx-btn pcx-btn--ghost" data-vx="forget">Удалить токен</button>' : ''}
                 </div>
                 <div data-vx="status"></div>
             </section>`;
@@ -6587,7 +6598,7 @@
             await GM.setValue(LOYALTY_TOKEN_KEY, newToken);
             loyaltyMe = null;
             await refreshPromoBackend();
-            if (!newToken) {
+            if (!newToken && !embedded) {
                 status.innerHTML = vxNote('warn', 'Токен не указан');
                 return;
             }
