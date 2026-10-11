@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Promo Codes & Bonus Manager
 // @namespace    http://tampermonkey.net/
-// @version      3.10.0
+// @version      3.11.0
 // @description  Управление промокодами, бонусными баллами, подарочными сертификатами и подписками в amoCRM: проверка, списание, аналитика кэшбека, применения промокодов и замен по флористам
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -205,6 +205,20 @@
         };
 
         document.body.appendChild(banner);
+        stackSideBanners();
+    }
+
+    // Плашки справа сверху (сертификат клиента, новая версия) ставим друг под другом.
+    // Возвращает отступ сверху для следующего блока - его берёт showNotification.
+    function stackSideBanners() {
+        let top = 20;
+        ['pcx-voucher-alert', 'pcx-update-banner'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.style.top = `${top}px`;
+            top += el.offsetHeight + 12;
+        });
+        return top;
     }
 
     async function checkForScriptUpdate() {
@@ -439,6 +453,20 @@
             .pcx-update__text { font-size: 12.5px; font-weight: 500; line-height: 1.45; color: var(--pcx-text-2); margin-bottom: 14px; }
             .pcx-update__actions { display: flex; gap: 8px; }
             .pcx-update__actions .pcx-btn { flex: 1; height: 34px; font-size: 13px; }
+
+            /* Плашка «у клиента есть сертификат»: акцентная, чтобы не спутать с обновлением */
+            .pcx-vx-alert { background: var(--pcx-accent-soft); border-color: transparent; z-index: 9998; }
+            .pcx-vx-alert .pcx-update__title { color: var(--pcx-accent); }
+            .pcx-vx-alert .pcx-update__text { color: var(--pcx-text); margin-bottom: 10px; }
+            .pcx-vx-alert__list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+            .pcx-vx-alert__row {
+                display: flex; justify-content: space-between; align-items: center; gap: 10px;
+                padding: 8px 10px; background: var(--pcx-surface); border-radius: 10px;
+                font-size: 12.5px; color: var(--pcx-text);
+            }
+            .pcx-vx-alert__row > span { min-width: 0; }
+            .pcx-vx-alert__kind { display: block; font-size: 11.5px; font-weight: 500; color: var(--pcx-text-3); margin-bottom: 1px; }
+            .pcx-vx-alert__row b { white-space: nowrap; }
 
             /* Уведомления */
             .pcx-toast {
@@ -5634,6 +5662,105 @@
         vxBindOpen(box);
     }
 
+    // ---------- плашка «у клиента есть сертификат» ----------
+    // Чтобы менеджер не провёл заказ мимо сервиса: при открытии сделки ищем действующие
+    // сертификаты и подписки по телефону контакта и показываем плашку справа сверху.
+
+    const VX_ALERT_SEEN_KEY = 'promo_voucher_alert_seen';   // { leadId: время «Понятно» }
+    const VX_ALERT_SEEN_TTL = 24 * 60 * 60 * 1000;
+    let vxAlertSeq = 0;
+
+    function vxAlertSeen() {
+        try {
+            const all = JSON.parse(localStorage.getItem(VX_ALERT_SEEN_KEY) || '{}') || {};
+            const now = Date.now();
+            Object.keys(all).forEach(id => { if (now - all[id] > VX_ALERT_SEEN_TTL) delete all[id]; });
+            return all;
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function hideVoucherAlert() {
+        document.getElementById('pcx-voucher-alert')?.remove();
+        stackSideBanners();
+    }
+
+    async function checkClientVouchers() {
+        const seq = ++vxAlertSeq;
+        const leadId = getCurrentLeadId();
+        if (!leadId || vxAlertSeen()[leadId]) return;
+        try {
+            const { token } = await getLoyaltySettings();
+            if (!token) return;
+            const ctx = await getVxLeadContext(true);
+            if (!ctx.phone || seq !== vxAlertSeq) return;
+            const [list, ops] = await Promise.all([
+                loyaltyRequest('GET', '/api/v1/vouchers?limit=20&state=active&phone=' + encodeURIComponent(ctx.phone)),
+                loyaltyRequest('GET', `/api/v1/operations?lead_id=${leadId}&limit=100`)
+            ]);
+            // Пока ждали ответ, менеджер ушёл в другую сделку - этот ответ уже не нужен
+            if (seq !== vxAlertSeq || getCurrentLeadId() !== leadId) return;
+            const items = ((list && list.items) || []).filter(v => v.state === 'active');
+            if (!items.length) return;
+            if (((ops && ops.items) || []).some(o => o.type === 'redeem')) return; // списание уже сделали
+            showVoucherAlert(ctx, items);
+        } catch (error) {
+            console.warn('[Сертификаты] Проверка сертификатов клиента не удалась:', error);
+        }
+    }
+
+    function showVoucherAlert(ctx, items) {
+        hideVoucherAlert();
+        injectStyles();
+
+        const flowers = items.filter(v => v.flower).length;
+        const what = flowers === items.length
+            ? (items.length > 1 ? 'подписки' : 'подписка')
+            : (flowers ? 'сертификаты и подписки' : (items.length > 1 ? 'сертификаты' : 'сертификат'));
+        const rows = items.slice(0, 3).map(v => {
+            const rest = v.flower
+                ? `осталось ${v.flower.bouquets_left} из ${v.flower.bouquets_total}`
+                : formatKop(v.balance_kop);
+            return `<div class="pcx-vx-alert__row">
+                <span><span class="pcx-vx-alert__kind">${escHtml(v.kind_title)}</span><span class="pcx-vx-code">${escHtml(v.code)}</span></span>
+                <b>${escHtml(rest)}</b>
+            </div>`;
+        }).join('');
+        const more = items.length > 3 ? `<div class="pcx-vx-muted">и ещё ${items.length - 3}</div>` : '';
+
+        const alert = document.createElement('div');
+        alert.id = 'pcx-voucher-alert';
+        alert.className = 'pcx pcx-update pcx-vx-alert';
+        alert.innerHTML = `
+            <div class="pcx-update__title">У клиента есть ${what}</div>
+            <div class="pcx-update__text">Спишите оплату во вкладке «Подписки и сертификаты», иначе у клиента ничего не потратится.</div>
+            <div class="pcx-vx-alert__list">${rows}${more}</div>
+            <div class="pcx-update__actions">
+                <button class="pcx-btn pcx-btn--ghost" data-act="seen">Понятно</button>
+                <button class="pcx-btn pcx-btn--primary" data-act="open">Открыть</button>
+            </div>
+        `;
+
+        alert.querySelector('[data-act="open"]').onclick = () => {
+            hideVoucherAlert();
+            // Окно открывается сразу, загрузка промокодов идёт фоном - вкладку не ждём
+            openPromoModal();
+            switchTab('vouchers');
+        };
+        alert.querySelector('[data-act="seen"]').onclick = () => {
+            try {
+                const seen = vxAlertSeen();
+                seen[ctx.leadId] = Date.now();
+                localStorage.setItem(VX_ALERT_SEEN_KEY, JSON.stringify(seen));
+            } catch (error) { /* не критично */ }
+            hideVoucherAlert();
+        };
+
+        document.body.appendChild(alert);
+        stackSideBanners();
+    }
+
     function vxOpsTable(ops, showCode) {
         return `
             <div class="pcx-vx-tablewrap"><table class="pcx-vx-table">
@@ -6763,9 +6890,8 @@
         notification.className = `pcx pcx-toast${type === 'error' ? ' pcx-toast--error' : type === 'warning' ? ' pcx-toast--warning' : type === 'info' ? ' pcx-toast--info' : ''}`;
         notification.textContent = message;
 
-        // Если висит плашка обновления - становимся под неё, а не поверх
-        const banner = document.getElementById('pcx-update-banner');
-        if (banner) notification.style.top = `${banner.offsetHeight + 32}px`;
+        // Если висят плашки справа сверху - становимся под них, а не поверх
+        notification.style.top = `${stackSideBanners()}px`;
 
         document.body.appendChild(notification);
         setTimeout(() => notification.remove(), type === 'error' ? 5000 : 3000);
@@ -6795,6 +6921,7 @@
         refreshPromoBackend();
         createPromoButton();
         setTimeout(checkForScriptUpdate, 8000);   // не мешаем загрузке страницы сделки
+        setTimeout(checkClientVouchers, 2500);    // карточка контакта успевает прорисоваться
     }
 
     if (document.readyState === 'loading') {
@@ -6811,6 +6938,11 @@
             const oldButton = document.getElementById('promo-codes-main-btn');
             if (oldButton) oldButton.remove();
             setTimeout(createPromoButton, 1000);
+            // Плашка о сертификатах относится к прошлой сделке - убираем и проверяем заново
+            vxAlertSeq++;
+            vxLeadCtxCache = null;
+            hideVoucherAlert();
+            setTimeout(checkClientVouchers, 2000);
         }
     }).observe(document, {subtree: true, childList: true});
 
