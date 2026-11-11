@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.2.1
+// @version      10.2.2
 // @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -10,6 +10,7 @@
 // @downloadURL  https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
 // @grant        GM.xmlHttpRequest
 // @connect      store.tildaapi.com
+// @connect      myskladandamocrm.ru
 // @connect      raw.githubusercontent.com
 // @connect      orangesmr.ru
 // @connect      static.tildacdn.com
@@ -19,18 +20,20 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.2.1';
+    const SCRIPT_VERSION = '10.2.2';
 
     // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
     // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
     // (ровно как на сайте), остатки, дерево категорий сайта и всю галерею фото.
     const STORE_API_URL = 'https://store.tildaapi.com/api/getproductslist/';
+    const STORE_MIRROR_URL = 'https://myskladandamocrm.ru/catalog/tilda/';
     const DEFAULT_STORE_RECID = '1027275996';    // id блока каталога на сайте orangesmr.ru
     const DEFAULT_STORE_PART = '986423143961';   // категория «Все»
     const STORE_PAGE_SIZE = 100;                 // API отдаёт не больше ~300 за раз, ходим страницами
 
     // Резервный источник - старый YML-фид (используется, только если store-API недоступен)
     const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/5a000cfb7af67e4e5d2e22d7edc7cf54.yml';
+    const RETIRED_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/7c41467d3c9b55f02510d2165ea962c7.yml';
 
     // Ключи кэша
     const CACHE_KEY = 'orange_store_catalog_v10';
@@ -60,7 +63,7 @@
     function getFeedUrl() {
         try {
             const saved = localStorage.getItem('orange_yml_feed_url');
-            return saved || DEFAULT_YML_FEED_URL;
+            return saved && saved !== RETIRED_YML_FEED_URL ? saved : DEFAULT_YML_FEED_URL;
         } catch (error) {
             console.error('Ошибка чтения URL фида:', error);
             return DEFAULT_YML_FEED_URL;
@@ -1842,7 +1845,7 @@
                 },
                 onerror: function() { reject(new Error('Ошибка соединения со store-API')); },
                 ontimeout: function() { reject(new Error('Таймаут запроса к store-API')); },
-                timeout: 30000
+                timeout: 7000
             });
         });
     }
@@ -1917,17 +1920,17 @@
     }
 
     // Забираем весь каталог из store-API страницами (как это делает сам сайт)
-    async function loadStoreCatalog() {
-        const cfg = getStoreConfig();
+    async function loadStoreCatalog(cfg, useMirror = false) {
         const products = [];
         let parts = [];
         let total = null;
         let slice = 1;
 
         while (slice <= 30) {
-            const url = `${STORE_API_URL}?storepartuid=${cfg.part}&recid=${cfg.recid}` +
-                        `&c=${Date.now()}&size=${STORE_PAGE_SIZE}&slice=${slice}` +
-                        (slice === 1 ? '&getparts=true' : '');
+            const url = useMirror ? `${STORE_MIRROR_URL}${slice}` :
+                `${STORE_API_URL}?storepartuid=${cfg.part}&recid=${cfg.recid}` +
+                `&c=${Date.now()}&size=${STORE_PAGE_SIZE}&slice=${slice}` +
+                (slice === 1 ? '&getparts=true' : '');
 
             console.log(`🔄 store-API, страница ${slice}...`);
             const data = await requestJSON(url);
@@ -2000,6 +2003,9 @@
                 },
                 onerror: function() {
                     reject(new Error('Ошибка соединения'));
+                },
+                ontimeout: function() {
+                    reject(new Error('Таймаут загрузки резервного фида'));
                 },
                 timeout: 30000
             });
@@ -2131,14 +2137,22 @@
     // Основной источник - store-API. YML-фид остаётся резервом: он не отдаёт распроданные
     // товары и цены вариантов вместо цены карточки, но лучше, чем пустой каталог.
     async function loadTildaCatalog() {
+        const cfg = getStoreConfig();
         try {
-            return await loadStoreCatalog();
+            return await loadStoreCatalog(cfg);
         } catch (error) {
-            console.error('❌ store-API недоступен, пробуем резервный YML-фид:', error);
-            showNotification('store-API недоступен, каталог загружен из резервного YML-фида', 'info');
-            const products = await loadYMLFeed();
-            return { products, parts: [] };
+            console.warn('Прямой запрос к каталогу Тильды не удался:', error);
         }
+        if (cfg.recid === DEFAULT_STORE_RECID && cfg.part === DEFAULT_STORE_PART) {
+            try {
+                return await loadStoreCatalog(cfg, true);
+            } catch (error) {
+                console.warn('Загрузка каталога через FirstVDS не удалась:', error);
+            }
+        }
+        const products = await loadYMLFeed();
+        showNotification('Используется резервный YML-фид', 'info');
+        return { products, parts: [] };
     }
 
     function showNotification(message, type) {
