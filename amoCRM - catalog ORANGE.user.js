@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.2.2
+// @version      10.2.3
 // @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.2.2';
+    const SCRIPT_VERSION = '10.2.3';
 
     // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
     // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
@@ -41,24 +41,10 @@
     const PARTS_KEY = 'orange_store_parts_v10';
     const CACHE_MAX_AGE = 15 * 60 * 1000;        // 15 минут: остатки на сайте меняются быстро
 
-    // Сбрасываем кэш при обновлении версии скрипта
-    (function checkVersionUpdate() {
-        const savedVersion = localStorage.getItem('orange_catalog_version');
-        if (savedVersion !== SCRIPT_VERSION) {
-            console.log(`🔄 Обновление версии ${savedVersion} → ${SCRIPT_VERSION}, сбрасываем кэш...`);
-            localStorage.removeItem('orange_yml_feed_url');
-            localStorage.removeItem('orange_tilda_catalog');
-            localStorage.removeItem('orange_tilda_catalog_timestamp');
-            localStorage.removeItem(CACHE_KEY);
-            localStorage.removeItem(CACHE_TS_KEY);
-            localStorage.removeItem(PARTS_KEY);
-            localStorage.setItem('orange_catalog_version', SCRIPT_VERSION);
-        }
-    })();
-
     let productsCache = [];
     let sitePartsCache = [];          // дерево категорий сайта
     let activeCustomCategory = null;  // индекс выбранной «моей категории» или null
+    let catalogRequest = null;
 
     function getFeedUrl() {
         try {
@@ -1092,36 +1078,20 @@
     }
     
     async function refreshCatalog() {
-        if (!confirm('Обновить каталог товаров с сайта?\n\nТекущий кэш будет очищен и загружены актуальные цены и остатки.')) {
+        if (!confirm('Загрузить актуальные цены и остатки с сайта?')) {
             return;
         }
 
         showNotification('Обновление каталога...', 'info');
 
-        localStorage.removeItem(CACHE_KEY);
-        localStorage.removeItem(CACHE_TS_KEY);
-
         try {
-            const { products, parts } = await loadTildaCatalog();
-
-            if (products && products.length > 0) {
-                productsCache = products;
-                if (parts && parts.length) sitePartsCache = parts;
-                saveCatalogToCache(products, sitePartsCache);
-
-                renderSitePartsFilter();
-                applyFilters();
-
-                const dropdown = document.getElementById('custom-category-dropdown');
-                if (dropdown) dropdown.style.display = 'none';
-
-                showNotification(`Каталог обновлён: ${products.length} ${pluralize(products.length, 'товар', 'товара', 'товаров')}, в наличии ${products.filter(p => p.inStock).length}`, 'success');
-            } else {
-                showNotification('Не удалось загрузить товары', 'error');
-            }
+            await updateCatalogData();
+            const dropdown = document.getElementById('custom-category-dropdown');
+            if (dropdown) dropdown.style.display = 'none';
+            showNotification(`Каталог обновлён: ${productsCache.length} ${pluralize(productsCache.length, 'товар', 'товара', 'товаров')}, в наличии ${productsCache.filter(p => p.inStock).length}`, 'success');
         } catch (error) {
             console.error('Ошибка обновления каталога:', error);
-            showNotification('Ошибка обновления: '+ error.message, 'error');
+            showNotification('Не удалось обновить каталог. Попробуйте ещё раз.', 'error');
         }
     }
 
@@ -1212,6 +1182,11 @@
     }
 
     function openCatalogModal() {
+        const cached = catalogCacheIsFresh() ? getCachedCatalog() : null;
+        if (cached?.length) {
+            productsCache = cached;
+            sitePartsCache = getCachedParts();
+        }
         let overlay = document.getElementById('tilda-catalog-overlay');
 
         if (!overlay) {
@@ -1227,18 +1202,15 @@
         renderSitePartsFilter();
         resetFilters();
 
-        // Кэш устарел - тихо обновляем цены и остатки, не заставляя менеджера ждать
-        if (!getCachedCatalog()) {
-            loadTildaCatalog().then(({ products, parts }) => {
-                if (!products || !products.length) return;
-                productsCache = products;
-                if (parts && parts.length) sitePartsCache = parts;
-                saveCatalogToCache(products, sitePartsCache);
-                renderSitePartsFilter();
-                applyFilters();
-                console.log('♻️ Каталог обновлён в фоне');
-            }).catch(error => console.error('Фоновое обновление не удалось:', error));
-        }
+        if (catalogRequest || cached?.length) return;
+
+        const loading = productsCache.length ? null : showNotification('Загружаем каталог…', 'info');
+        updateCatalogData().catch(error => {
+            console.error('Не удалось загрузить каталог:', error);
+            if (!productsCache.length && overlay.style.display !== 'none') {
+                showNotification('Не удалось загрузить каталог. Попробуйте открыть его ещё раз.', 'error');
+            }
+        }).finally(() => loading?.remove());
     }
 
     function closeCatalogModal() {
@@ -1262,6 +1234,10 @@
         }
 
         const selectedItems = productsCache.filter(p => selectedProducts.has(p.id));
+        if (!selectedItems.length) {
+            showNotification('Каталог обновился. Выберите букеты ещё раз.', 'error');
+            return;
+        }
 
         const outOfStock = selectedItems.filter(p => p.inStock === false);
         if (outOfStock.length > 0) {
@@ -1275,12 +1251,18 @@
         closeCatalogModal();
 
         try {
+            // Готовим следующее фото, пока amoCRM загружает текущее.
+            let pending = prepareProductImage(selectedItems[0]);
             for (let i = 0; i < selectedItems.length; i++) {
                 const product = selectedItems[i];
                 showNotification(`Отправка ${i + 1} из ${selectedItems.length}: ${product.title}`, 'info');
-                await sendProductToChat(product);
+                const { image, error } = await pending;
+                if (error) throw error;
+                const next = selectedItems[i + 1];
+                if (next) pending = prepareProductImage(next);
+                await sendProductToChat(product, image);
                 
-                if (i < selectedItems.length - 1) {
+                if (next) {
                     console.log('Ждем перед отправкой следующего товара...');
                     await sleep(1500);
                 }
@@ -1339,17 +1321,16 @@
         return false;
     }
 
-    async function sendProductToChat(product) {
-        console.log('Начинаем отправку товара:', product.title);
+    async function prepareProductImage(product) {
+        try {
+            const original = await downloadImage(product.image);
+            return { image: await addTextToImage(original, product) };
+        } catch (error) {
+            return { error };
+        }
+    }
 
-        console.log('Скачиваем изображение...');
-        const imageBlob = await downloadImage(product.image);
-        console.log('Изображение скачано, размер:', imageBlob.size);
-
-        console.log('Наносим текст на изображение...');
-        const imageWithText = await addTextToImage(imageBlob, product);
-        console.log('Текст нанесен на изображение');
-
+    async function sendProductToChat(product, imageWithText) {
         const fileInput = findChatFileInput();
         if (!fileInput) {
             throw new Error('Не найден input для загрузки файлов');
@@ -1401,6 +1382,7 @@
                 method: 'GET',
                 url: url,
                 responseType: 'blob',
+                timeout: 15000,
                 onload: function(response) {
                     if (response.status === 200) {
                         resolve(response.response);
@@ -1409,15 +1391,23 @@
                     }
                 },
                 onerror: function() {
-                    reject(new Error('Ошибка соединения'));
+                    reject(new Error('Не удалось скачать фото'));
+                },
+                ontimeout: function() {
+                    reject(new Error('Загрузка фото заняла слишком много времени'));
                 }
             });
         });
     }
 
     async function addTextToImage(imageBlob, product) {
-        // Ждём шрифт, иначе canvas нарисует надпись системным
-        try { await document.fonts.ready; } catch (error) { /* не критично */ }
+        // Ждём только шрифт подписи. При задержке используется системный шрифт.
+        if (document.getElementById('ocx-font') && document.fonts) {
+            const label = `${product.title} 0123456789 ₽ БЕСПЛАТНАЯ ДОСТАВКА`;
+            try {
+                await Promise.race([document.fonts.load('700 24px Manrope', label), sleep(250)]);
+            } catch (error) { /* не критично */ }
+        }
 
         return new Promise((resolve, reject) => {
             const img = new Image();
@@ -1427,17 +1417,17 @@
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
                 
-                canvas.width = img.width;
-                canvas.height = img.height;
-                
-                ctx.drawImage(img, 0, 0);
+                const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+                canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+                canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
                 
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 
-                const titleFontSize = Math.max(Math.floor(img.width / 25), 20);
-                const priceFontSize = Math.max(Math.floor(img.width / 16), 28);
-                const deliveryFontSize = Math.max(Math.floor(img.width / 30), 16);
+                const titleFontSize = Math.max(Math.floor(canvas.width / 25), 20);
+                const priceFontSize = Math.max(Math.floor(canvas.width / 16), 28);
+                const deliveryFontSize = Math.max(Math.floor(canvas.width / 30), 16);
                 const padding = Math.floor(titleFontSize * 0.8);
                 
                 const title = product.title.toUpperCase();
@@ -1454,7 +1444,7 @@
                 ctx.shadowOffsetY = 2;
                 
                 const titleX = padding;
-                const deliveryY = img.height - padding;
+                const deliveryY = canvas.height - padding;
                 const priceY = deliveryY - deliveryFontSize - padding * 0.6;
                 const titleY = priceY - priceFontSize - padding * 0.6;
                 
@@ -1475,7 +1465,7 @@
                     } else {
                         reject(new Error('Не удалось создать изображение с текстом'));
                     }
-                }, 'image/jpeg', 0.95);
+                }, 'image/jpeg', 0.9);
             };
             
             img.onerror = function() {
@@ -1785,22 +1775,21 @@
 
     function getCachedCatalog() {
         try {
-            const cached = localStorage.getItem(CACHE_KEY);
-            const timestamp = localStorage.getItem(CACHE_TS_KEY);
-
-            if (cached && timestamp) {
-                const age = Date.now() - parseInt(timestamp);
-
-                if (age < CACHE_MAX_AGE) {
-                    console.log(`Каталог загружен из кэша (возраст: ${Math.floor(age / 60000)} минут)`);
-                    return JSON.parse(cached);
-                }
-                console.log('Кэш устарел, требуется обновление');
-            }
+            const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
+            return Array.isArray(cached) ? cached : null;
         } catch (error) {
             console.error('Ошибка чтения кэша:', error);
+            return null;
         }
-        return null;
+    }
+
+    function catalogCacheIsFresh() {
+        try {
+            const age = Date.now() - Number(localStorage.getItem(CACHE_TS_KEY));
+            return age >= 0 && age < CACHE_MAX_AGE;
+        } catch (error) {
+            return false;
+        }
     }
 
     function getCachedParts() {
@@ -1816,9 +1805,7 @@
         try {
             localStorage.setItem(CACHE_KEY, JSON.stringify(products));
             localStorage.setItem(CACHE_TS_KEY, Date.now().toString());
-            if (parts && parts.length) {
-                localStorage.setItem(PARTS_KEY, JSON.stringify(parts));
-            }
+            localStorage.setItem(PARTS_KEY, JSON.stringify(parts));
             console.log(`Каталог сохранён в кэш (${products.length} товаров)`);
         } catch (error) {
             console.error('Ошибка сохранения кэша:', error);
@@ -2134,15 +2121,8 @@
         return cleanTitle;
     }
 
-    // Основной источник - store-API. YML-фид остаётся резервом: он не отдаёт распроданные
-    // товары и цены вариантов вместо цены карточки, но лучше, чем пустой каталог.
     async function loadTildaCatalog() {
         const cfg = getStoreConfig();
-        try {
-            return await loadStoreCatalog(cfg);
-        } catch (error) {
-            console.warn('Прямой запрос к каталогу Тильды не удался:', error);
-        }
         if (cfg.recid === DEFAULT_STORE_RECID && cfg.part === DEFAULT_STORE_PART) {
             try {
                 return await loadStoreCatalog(cfg, true);
@@ -2150,8 +2130,12 @@
                 console.warn('Загрузка каталога через FirstVDS не удалась:', error);
             }
         }
+        try {
+            return await loadStoreCatalog(cfg);
+        } catch (error) {
+            console.warn('Прямой запрос к каталогу Тильды не удался:', error);
+        }
         const products = await loadYMLFeed();
-        showNotification('Используется резервный YML-фид', 'info');
         return { products, parts: [] };
     }
 
@@ -2171,45 +2155,24 @@
 
         document.body.appendChild(notification);
         setTimeout(() => notification.remove(), type === 'error' ? 5000 : 3000);
+        return notification;
     }
 
-    async function initCatalog() {
-        console.log('Инициализация каталога...');
-
-        const cached = getCachedCatalog();
-
-        if (cached && cached.length > 0) {
-            productsCache = cached;
-            sitePartsCache = getCachedParts();
-            console.log(`✅ Каталог загружен из кэша: ${productsCache.length} товаров`);
-            return;
-        }
-
-        console.log('Кэш пуст или устарел, загружаем каталог из store-API...');
-        showNotification('Загрузка каталога с сайта...', 'info');
-
-        try {
-            const { products, parts } = await loadTildaCatalog();
-
-            if (products && products.length > 0) {
+    function updateCatalogData() {
+        if (!catalogRequest) {
+            catalogRequest = loadTildaCatalog().then(({ products, parts }) => {
                 productsCache = products;
-                sitePartsCache = parts || [];
-                saveCatalogToCache(products, sitePartsCache);
-                console.log(`✅ Каталог обновлен: ${products.length} товаров`);
-                showNotification(`Каталог обновлён: ${products.length} ${pluralize(products.length, 'товар', 'товара', 'товаров')}, в наличии ${products.filter(p => p.inStock).length}`, 'success');
-            } else {
-                console.warn('⚠️ Получен пустой каталог, используем локальные данные');
-                showNotification('Используется локальный каталог', 'info');
-            }
-        } catch (error) {
-            console.error('❌ Ошибка загрузки каталога:', error);
-            showNotification(`Не удалось загрузить каталог: ${error.message}`, 'error');
+                sitePartsCache = parts;
+                saveCatalogToCache(products, parts);
+                renderSitePartsFilter();
+                applyFilters();
+            }).finally(() => { catalogRequest = null; });
         }
+        return catalogRequest;
     }
 
     injectStyles();
     injectFont();
-    initCatalog();
     setTimeout(checkForScriptUpdate, 8000);   // не мешаем загрузке страницы сделки
 
     if (document.readyState === 'loading') {
