@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      11.0.0
+// @version      11.0.1
 // @description  Каталог ШИП-ШОП: цены, наличие, галереи и отправка фото в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '11.0.0';
+    const SCRIPT_VERSION = '11.0.1';
 
     const SHIPSHOP_ORIGIN = 'https://ship-shop.ru';
     const SHIPSHOP_CATALOG_URL = SHIPSHOP_ORIGIN + '/api/v1/amo-catalog';
@@ -708,7 +708,7 @@
         const button = document.createElement('button');
         button.id = 'tilda-catalog-main-btn';
         button.innerHTML = `${ICONS.folder}<span>Каталог</span>`;
-        button.title = 'Каталог Orange';
+        button.title = 'Каталог ШИП-ШОП';
         button.onclick = openCatalogModal;
 
         ensureButtonDock().appendChild(button);
@@ -735,7 +735,7 @@
         modal.innerHTML = `
             <div class="ocx-head">
                 <div>
-                    <h2 class="ocx-head__title">Каталог Orange</h2>
+                    <h2 class="ocx-head__title">Каталог ШИП-ШОП</h2>
                     <p class="ocx-head__sub" id="catalog-head-sub">Выберите букеты для отправки в чат</p>
                 </div>
                 <button id="close-modal-btn" class="ocx-iconbtn" title="Закрыть">${ICONS.close}</button>
