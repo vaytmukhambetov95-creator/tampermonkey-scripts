@@ -1,44 +1,32 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      10.2.3
-// @description  Каталог Orange из store-API Tilda (тот же источник, что и сайт): все товары, цены как на сайте, категории сайта, отправка в чат amoCRM
+// @version      11.0.0
+// @description  Каталог ШИП-ШОП: цены, наличие, галереи и отправка фото в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
 // @match        https://*.kommo.com/*
 // @updateURL    https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
 // @downloadURL  https://raw.githubusercontent.com/vaytmukhambetov95-creator/tampermonkey-scripts/main/amoCRM%20-%20catalog%20ORANGE.user.js
 // @grant        GM.xmlHttpRequest
-// @connect      store.tildaapi.com
-// @connect      myskladandamocrm.ru
+// @connect      ship-shop.ru
 // @connect      raw.githubusercontent.com
-// @connect      orangesmr.ru
-// @connect      static.tildacdn.com
 // @connect      *
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '10.2.3';
+    const SCRIPT_VERSION = '11.0.0';
 
-    // Основной источник - тот же store-API Tilda, из которого товары берёт сам сайт.
-    // В отличие от YML-фида отдаёт ВСЕ товары (включая распроданные), цену карточки
-    // (ровно как на сайте), остатки, дерево категорий сайта и всю галерею фото.
-    const STORE_API_URL = 'https://store.tildaapi.com/api/getproductslist/';
-    const STORE_MIRROR_URL = 'https://myskladandamocrm.ru/catalog/tilda/';
-    const DEFAULT_STORE_RECID = '1027275996';    // id блока каталога на сайте orangesmr.ru
-    const DEFAULT_STORE_PART = '986423143961';   // категория «Все»
-    const STORE_PAGE_SIZE = 100;                 // API отдаёт не больше ~300 за раз, ходим страницами
-
-    // Резервный источник - старый YML-фид (используется, только если store-API недоступен)
-    const DEFAULT_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/5a000cfb7af67e4e5d2e22d7edc7cf54.yml';
-    const RETIRED_YML_FEED_URL = 'https://orangesmr.ru/tstore/yml/7c41467d3c9b55f02510d2165ea962c7.yml';
+    const SHIPSHOP_ORIGIN = 'https://ship-shop.ru';
+    const SHIPSHOP_CATALOG_URL = SHIPSHOP_ORIGIN + '/api/v1/amo-catalog';
+    const ARCHIVE_PART = 'archive';
 
     // Ключи кэша
-    const CACHE_KEY = 'orange_store_catalog_v10';
-    const CACHE_TS_KEY = 'orange_store_catalog_v10_ts';
-    const PARTS_KEY = 'orange_store_parts_v10';
+    const CACHE_KEY = 'orange_store_catalog_v11';
+    const CACHE_TS_KEY = 'orange_store_catalog_v11_ts';
+    const PARTS_KEY = 'orange_store_parts_v11';
     const CACHE_MAX_AGE = 15 * 60 * 1000;        // 15 минут: остатки на сайте меняются быстро
 
     let productsCache = [];
@@ -46,29 +34,10 @@
     let activeCustomCategory = null;  // индекс выбранной «моей категории» или null
     let catalogRequest = null;
 
-    function getFeedUrl() {
-        try {
-            const saved = localStorage.getItem('orange_yml_feed_url');
-            return saved && saved !== RETIRED_YML_FEED_URL ? saved : DEFAULT_YML_FEED_URL;
-        } catch (error) {
-            console.error('Ошибка чтения URL фида:', error);
-            return DEFAULT_YML_FEED_URL;
-        }
-    }
-
-    function saveFeedUrl(url) {
-        try {
-            localStorage.setItem('orange_yml_feed_url', url);
-            console.log('URL фида сохранён:', url);
-            return true;
-        } catch (error) {
-            console.error('Ошибка сохранения URL фида:', error);
-            return false;
-        }
-    }
     let customCategories = [];
 
     let selectedProducts = new Set();
+    const galleryPositions = new Map();
     let currentCategoryEdit = null;
 
     // Основной шрифт интерфейса: Manrope подгружается ниже, дальше - системный стек
@@ -457,6 +426,28 @@
             .ocx-card__media { position: relative; padding-top: 100%; background: var(--ocx-surface-2); overflow: hidden; }
             .ocx-card__media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
             .ocx-card.is-out .ocx-card__media img { filter: grayscale(0.75); opacity: 0.65; }
+            .ocx-gallery-nav {
+                position: absolute;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                inset: auto 8px 8px;
+                pointer-events: none;
+            }
+            .ocx-gallery-nav button, .ocx-gallery-nav span {
+                display: grid;
+                place-items: center;
+                border: 0;
+                border-radius: 8px;
+                background: rgba(22, 22, 26, 0.78);
+                color: white;
+            }
+            .ocx-gallery-nav button { width: 32px; height: 32px; cursor: pointer; pointer-events: auto; }
+            .ocx-gallery-nav button:hover { background: rgba(22, 22, 26, 0.95); }
+            .ocx-gallery-nav button:focus-visible { outline: 2px solid var(--ocx-accent); }
+            .ocx-gallery-nav button:first-child svg { transform: rotate(90deg); }
+            .ocx-gallery-nav button:last-child svg { transform: rotate(-90deg); }
+            .ocx-gallery-nav span { padding: 4px 8px; font-size: 11px; font-variant-numeric: tabular-nums; }
             .ocx-card__pick {
                 position: absolute;
                 top: 10px;
@@ -492,7 +483,6 @@
             .ocx-price { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; }
             .ocx-price__now { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--ocx-text); }
             .ocx-price__now--ask { font-size: 14px; font-weight: 600; color: var(--ocx-text-2); }
-            .ocx-price__old { font-size: 13px; font-weight: 500; color: var(--ocx-text-3); text-decoration: line-through; }
             .ocx-card__descr { margin: 0; font-size: 12.5px; font-weight: 400; line-height: 1.45; color: var(--ocx-text-2);
                 display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
@@ -823,6 +813,8 @@
         products.forEach(product => {
             const outOfStock = product.inStock === false;
             const picked = selectedProducts.has(product.id);
+            const photos = product.gallery;
+            let frame = Math.min(galleryPositions.get(product.id) || 0, Math.max(photos.length - 1, 0));
 
             // Варианты («Как на фото», «Роскошный» и т.д.) - подсказкой при наведении на цену
             const editionsHint = escapeAttr((product.editions || [])
@@ -830,22 +822,36 @@
                 .join('\n'));
 
             const card = document.createElement('div');
-            card.className = `ocx-card${picked ? ' is-picked' : ''}${outOfStock ? ' is-out' : ''}`;
+            card.className = `ocx-card${picked ? ' is-picked' : ''}${outOfStock && !product.archived ? ' is-out' : ''}`;
             card.innerHTML = `
                 <div class="ocx-card__media">
-                    <img src="${escapeAttr(product.image)}" alt="" loading="lazy">
-                    ${outOfStock ? '<div class="ocx-badge">Нет в наличии</div>' : ''}
+                    <img src="${escapeAttr(frame ? photos[frame] : product.image)}" alt="" loading="lazy">
+                    ${outOfStock ? `<div class="ocx-badge">${product.archived ? 'Наличие уточняйте' : 'Нет в наличии'}</div>` : ''}
                     <div class="ocx-card__pick">${ICONS.check}</div>
+                    ${photos.length > 1 ? `<div class="ocx-gallery-nav">
+                        <button type="button" data-step="-1" aria-label="Предыдущее фото">${ICONS.chevron}</button>
+                        <span aria-live="polite">${frame + 1} / ${photos.length}</span>
+                        <button type="button" data-step="1" aria-label="Следующее фото">${ICONS.chevron}</button>
+                    </div>` : ''}
                 </div>
                 <div class="ocx-card__body">
-                    <h3 class="ocx-card__title">${product.title}</h3>
+                    <h3 class="ocx-card__title">${escapeAttr(product.title)}</h3>
                     <div class="ocx-price" title="${editionsHint}">
-                        <span class="ocx-price__now${product.price > 0 ? '' : ' ocx-price__now--ask'}">${formatPrice(product.price)}</span>
-                        ${product.oldPrice > product.price ? `<span class="ocx-price__old">${product.oldPrice.toLocaleString('ru-RU')} ₽</span>` : ''}
+                        <span class="ocx-price__now${product.price > 0 ? '' : ' ocx-price__now--ask'}">${formatCardPrice(product)}</span>
                     </div>
-                    <p class="ocx-card__descr">${product.description || ''}</p>
+                    <p class="ocx-card__descr">${escapeAttr(product.description)}</p>
                 </div>
             `;
+
+            card.querySelectorAll('[data-step]').forEach(button => {
+                button.onclick = event => {
+                    event.stopPropagation();
+                    frame = (frame + Number(button.dataset.step) + photos.length) % photos.length;
+                    galleryPositions.set(product.id, frame);
+                    card.querySelector('img').src = frame ? photos[frame] : product.image;
+                    card.querySelector('.ocx-gallery-nav span').textContent = `${frame + 1} / ${photos.length}`;
+                };
+            });
 
             card.onclick = () => {
                 const isPicked = card.classList.toggle('is-picked');
@@ -1105,7 +1111,7 @@
         // «Моя категория» - это ещё один фильтр, а не отдельный режим показа
         let allowedIds = null;
         if (activeCustomCategory !== null && customCategories[activeCustomCategory]) {
-            allowedIds = customCategories[activeCustomCategory].productIds.map(String);
+            allowedIds = new Set(customCategories[activeCustomCategory].productIds.map(String));
         }
 
         const filtered = productsCache.filter(p => {
@@ -1113,9 +1119,9 @@
             const matchesPrice = p.price >= priceMin && p.price <= priceMax;
             const matchesPart = !sitePart || (p.parts || []).includes(sitePart);
             const matchesStock = !onlyInStock || p.inStock !== false;
-            const matchesCustom = !allowedIds || allowedIds.includes(String(p.id));
-
-            return matchesSearch && matchesPrice && matchesPart && matchesStock && matchesCustom;
+            const matchesCustom = !allowedIds || allowedIds.has(p.id);
+            const showsArchive = !p.archived || allowedIds || sitePart === ARCHIVE_PART;
+            return matchesSearch && matchesPrice && matchesPart && matchesStock && matchesCustom && showsArchive;
         });
 
         renderGallery(filtered);
@@ -1127,14 +1133,18 @@
         const el = document.getElementById('filter-summary');
         if (!el) return;
 
-        const parts = [`Показано ${shownCount} из ${productsCache.length}`];
+        const inArchive = document.getElementById('filter-site-part')?.value === ARCHIVE_PART;
+        let total = productsCache.filter(p => Boolean(p.archived) === inArchive).length;
+        const details = [];
         if (activeCustomCategory !== null && customCategories[activeCustomCategory]) {
             const cat = customCategories[activeCustomCategory];
-            parts.push(`категория «${cat.name}»`);
-            const missing = cat.productIds.length - shownCount;
-            if (missing > 0) parts.push(`${missing} ${pluralize(missing, 'товар не найден', 'товара не найдено', 'товаров не найдено')} в каталоге`);
+            const ids = new Set(cat.productIds.map(String));
+            total = productsCache.filter(p => ids.has(p.id)).length;
+            details.push(`категория «${cat.name}»`);
+            const missing = ids.size - total;
+            if (missing > 0) details.push(`${missing} ${pluralize(missing, 'товар не найден', 'товара не найдено', 'товаров не найдено')} в каталоге`);
         }
-        el.textContent = parts.join(' · ');
+        el.textContent = [`Показано ${shownCount} из ${total}`, ...details].join(' · ');
     }
 
     // Список категорий сайта в выпадающем фильтре
@@ -1196,6 +1206,7 @@
 
         overlay.style.display = 'block';
         selectedProducts.clear();
+        galleryPositions.clear();
         activeCustomCategory = null;
         updateSelectedCount();
         loadCustomCategories();
@@ -1233,7 +1244,10 @@
             return;
         }
 
-        const selectedItems = productsCache.filter(p => selectedProducts.has(p.id));
+        const selectedItems = productsCache.filter(p => selectedProducts.has(p.id)).map(product => ({
+            ...product,
+            image: product.gallery[galleryPositions.get(product.id) || 0] || product.gallery[0] || product.image
+        }));
         if (!selectedItems.length) {
             showNotification('Каталог обновился. Выберите букеты ещё раз.', 'error');
             return;
@@ -1242,7 +1256,7 @@
         const outOfStock = selectedItems.filter(p => p.inStock === false);
         if (outOfStock.length > 0) {
             const names = outOfStock.map(p => `• ${p.title}`).join('\n');
-            if (!confirm(`Этих букетов сейчас нет в наличии на сайте:\n\n${names}\n\nВсё равно отправить клиенту?`)) {
+            if (!confirm(`Для этих карточек нужно уточнить наличие:\n\n${names}\n\nВсё равно отправить клиенту?`)) {
                 return;
             }
         }
@@ -1431,7 +1445,7 @@
                 const padding = Math.floor(titleFontSize * 0.8);
                 
                 const title = product.title.toUpperCase();
-                const price = product.price > 0 ? `${product.price.toLocaleString('ru-RU')} ₽` : 'ЦЕНА ПО ЗАПРОСУ';
+                const price = formatCardPrice(product).toUpperCase();
                 const delivery = '+ БЕСПЛАТНАЯ ДОСТАВКА';
                 
                 ctx.fillStyle = '#FFFFFF';
@@ -1695,8 +1709,8 @@
                         <div class="ocx-pick__mark">${ICONS.check}</div>
                     </div>
                     <div class="ocx-pick__body">
-                        <div class="ocx-pick__title">${p.title}</div>
-                        <div class="ocx-pick__price">${formatPrice(p.price)}${p.inStock === false ? ' <span>· нет в наличии</span>' : ''}</div>
+                        <div class="ocx-pick__title">${escapeAttr(p.title)}</div>
+                        <div class="ocx-pick__price">${formatCardPrice(p)}${p.inStock === false ? ` <span>· ${p.archived ? 'наличие уточняйте' : 'нет в наличии'}</span>` : ''}</div>
                     </div>
                 </div>
             `).join('');
@@ -1762,17 +1776,6 @@
         };
     }
 
-    function getStoreConfig() {
-        try {
-            return {
-                recid: localStorage.getItem('orange_store_recid') || DEFAULT_STORE_RECID,
-                part: localStorage.getItem('orange_store_part') || DEFAULT_STORE_PART
-            };
-        } catch (error) {
-            return { recid: DEFAULT_STORE_RECID, part: DEFAULT_STORE_PART };
-        }
-    }
-
     function getCachedCatalog() {
         try {
             const cached = JSON.parse(localStorage.getItem(CACHE_KEY));
@@ -1827,11 +1830,11 @@
                     try {
                         resolve(JSON.parse(response.responseText));
                     } catch (error) {
-                        reject(new Error('Ответ store-API не разобрался как JSON'));
+                        reject(new Error('Ответ ШИП-ШОП не разобрался как JSON'));
                     }
                 },
-                onerror: function() { reject(new Error('Ошибка соединения со store-API')); },
-                ontimeout: function() { reject(new Error('Таймаут запроса к store-API')); },
+                onerror: function() { reject(new Error('Ошибка соединения с ШИП-ШОП')); },
+                ontimeout: function() { reject(new Error('Таймаут запроса к ШИП-ШОП')); },
                 timeout: 7000
             });
         });
@@ -1851,292 +1854,45 @@
         return price > 0 ? `${price.toLocaleString('ru-RU')} ₽` : 'Цена по запросу';
     }
 
-    function stripHtml(text) {
-        return String(text || '')
-            .replace(/<br\s*\/?>/gi, ' ')
-            .replace(/<[^>]+>/g, '')
-            .replace(/&nbsp;/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+    function formatCardPrice(product) {
+        const price = formatPrice(product.price);
+        return product.price > 0 && product.editions.length > 1 ? `от ${price}` : price;
     }
 
-    // Товар store-API -> внутренний формат каталога.
-    // id совпадает с group_id старого YML-фида, поэтому «мои категории» продолжают работать.
-    function mapStoreProduct(item) {
-        let gallery = [];
-        try {
-            gallery = (JSON.parse(item.gallery || '[]') || []).map(g => g.img).filter(Boolean);
-        } catch (error) {
-            gallery = [];
+    function shipshopPhoto(path) {
+        return typeof path === 'string' && /^\/(photos|assets)\//.test(path) ? SHIPSHOP_ORIGIN + path : '';
+    }
+
+    async function loadShipshopCatalog() {
+        const data = await requestJSON(SHIPSHOP_CATALOG_URL);
+        if (!Array.isArray(data?.products) || !data.products.length || !Array.isArray(data.parts)) {
+            throw new Error('ШИП-ШОП вернул пустой каталог или изменил формат ответа');
         }
 
-        let parts = [];
-        try {
-            parts = (JSON.parse(item.partuids || '[]') || []).map(String);
-        } catch (error) {
-            parts = [];
-        }
-
-        const editions = (item.editions || []).map(e => {
-            const sizeKey = Object.keys(e).find(k => !['uid', 'externalid', 'sku', 'price', 'priceold', 'quantity', 'img'].includes(k));
+        const products = data.products.map(card => {
+            if (typeof card.id !== 'string' || !/^[0-9]+$/.test(card.id) || typeof card.name !== 'string') {
+                throw new Error('ШИП-ШОП вернул некорректную карточку');
+            }
+            const gallery = (card.gallery || []).map(shipshopPhoto).filter(Boolean);
             return {
-                name: sizeKey ? String(e[sizeKey]) : '',
-                price: parseFloat(String(e.price).replace(/\s/g, '')) || 0,
-                quantity: parseInt(e.quantity) || 0
+                id: card.id,
+                title: card.name,
+                description: card.description || '',
+                price: card.price_kopecks / 100,
+                image: shipshopPhoto(card.image) || gallery[0] || '',
+                gallery,
+                inStock: card.stock > 0,
+                archived: card.archived === true,
+                parts: card.parts || [],
+                editions: (card.variants || []).map(variant => ({
+                    name: variant.label,
+                    price: variant.price_kopecks / 100,
+                    quantity: variant.stock
+                }))
             };
         });
-
-        const quantity = parseInt(item.quantity);
-        const description = stripHtml(item.text) || stripHtml(item.descr);
-
-        return {
-            id: String(item.uid),
-            title: String(item.title || '').trim(),
-            price: parseFloat(item.price) || 0,
-            oldPrice: parseFloat(item.priceold) || 0,
-            image: gallery[0] || '',
-            gallery: gallery,
-            description: description.substring(0, 200),
-            url: item.url || '',
-            quantity: isNaN(quantity) ? 0 : quantity,
-            inStock: !isNaN(quantity) && quantity > 0,
-            parts: parts,
-            editions: editions,
-            category: 'Каталог Orange'
-        };
-    }
-
-    // Забираем весь каталог из store-API страницами (как это делает сам сайт)
-    async function loadStoreCatalog(cfg, useMirror = false) {
-        const products = [];
-        let parts = [];
-        let total = null;
-        let slice = 1;
-
-        while (slice <= 30) {
-            const url = useMirror ? `${STORE_MIRROR_URL}${slice}` :
-                `${STORE_API_URL}?storepartuid=${cfg.part}&recid=${cfg.recid}` +
-                `&c=${Date.now()}&size=${STORE_PAGE_SIZE}&slice=${slice}` +
-                (slice === 1 ? '&getparts=true' : '');
-
-            console.log(`🔄 store-API, страница ${slice}...`);
-            const data = await requestJSON(url);
-
-            if (slice === 1) {
-                total = parseInt(data.total) || 0;
-                parts = (data.parts || []).filter(part => !part.hideonpublic);
-            }
-
-            const page = data.products || [];
-            page.forEach(item => products.push(mapStoreProduct(item)));
-
-            if (!page.length || (total && products.length >= total)) break;
-            slice++;
-        }
-
-        if (!products.length) {
-            throw new Error('store-API вернул пустой каталог');
-        }
-
-        console.log(`✅ Загружено ${products.length} товаров из store-API (в наличии: ${products.filter(p => p.inStock).length})`);
-
-        // Товары в наличии - первыми, дальше по названию
-        products.sort((a, b) => {
-            if (a.inStock !== b.inStock) return a.inStock ? -1 : 1;
-            return a.title.localeCompare(b.title, 'ru');
-        });
-
-        return { products, parts };
-    }
-
-    function loadYMLFeed() {
-        return new Promise((resolve, reject) => {
-            const feedUrl = getFeedUrl();
-            console.log('🔄 Загружаем YML-фид:', feedUrl);
-
-            GM.xmlHttpRequest({
-                method: 'GET',
-                url: feedUrl,
-                headers: {
-                    'Accept': 'application/xml, text/xml, */*'
-                },
-                onload: function(response) {
-                    console.log('📥 Ответ сервера:', response.status, response.statusText);
-
-                    if (response.status === 200) {
-                        try {
-                            const text = response.responseText;
-                            if (!text || text.trim().length === 0) {
-                                reject(new Error('Получен пустой ответ от сервера'));
-                                return;
-                            }
-
-                            const products = parseYMLProducts(text);
-                            if (products.length > 0) {
-                                console.log(`✅ Загружено ${products.length} товаров из YML`);
-                                resolve(products);
-                            } else {
-                                reject(new Error('YML не содержит товаров'));
-                            }
-                        } catch (error) {
-                            console.error('❌ Ошибка парсинга:', error);
-                            reject(new Error('Ошибка парсинга YML: ' + error.message));
-                        }
-                    } else if (response.status === 404) {
-                        reject(new Error('Фид не найден (404). Проверьте правильность URL.'));
-                    } else {
-                        reject(new Error(`Ошибка загрузки: ${response.status}`));
-                    }
-                },
-                onerror: function() {
-                    reject(new Error('Ошибка соединения'));
-                },
-                ontimeout: function() {
-                    reject(new Error('Таймаут загрузки резервного фида'));
-                },
-                timeout: 30000
-            });
-        });
-    }
-
-    function parseYMLProducts(xmlText) {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-        
-        const parserError = xmlDoc.querySelector('parsererror');
-        if (parserError) {
-            throw new Error('Ошибка парсинга XML: ' + parserError.textContent);
-        }
-        
-        const offers = xmlDoc.querySelectorAll('offer');
-        const groupedProducts = new Map();
-        
-        console.log(`Найдено ${offers.length} товаров в YML`);
-        
-        offers.forEach((offer) => {
-            try {
-                const nameEl = offer.querySelector('name');
-                const vendorCodeEl = offer.querySelector('vendorCode');  // Короткое название товара
-                const priceEl = offer.querySelector('price');
-                const pictureEl = offer.querySelector('picture');
-                const descriptionEl = offer.querySelector('description');
-                const urlEl = offer.querySelector('url');
-
-                if (nameEl && priceEl) {
-                    const groupId = offer.getAttribute('group_id');
-                    // Берём название из vendorCode (короткое), если нет - из name
-                    const rawTitle = (vendorCodeEl && vendorCodeEl.textContent.trim()) || nameEl.textContent.trim();
-                    const price = parseFloat(priceEl.textContent) || 0;
-                    const image = pictureEl ? pictureEl.textContent.trim() : '';
-                    const description = descriptionEl ? descriptionEl.textContent.trim().replace(/<[^>]+>/g, '').substring(0, 200) : rawTitle;
-                    const url = urlEl ? urlEl.textContent.trim() : '';
-                    
-                    const cleanTitle = cleanProductTitle(rawTitle);
-                    const isBaseVersion = rawTitle.toLowerCase().includes('как на фото');
-                    
-                    if (groupId) {
-                        if (!groupedProducts.has(groupId)) {
-                            groupedProducts.set(groupId, {
-                                title: cleanTitle,
-                                price: price,
-                                image: image,
-                                description: description,
-                                url: url,
-                                category: 'Каталог Orange',
-                                isBase: isBaseVersion
-                            });
-                        } else {
-                            const existing = groupedProducts.get(groupId);
-                            
-                            if (isBaseVersion) {
-                                existing.title = cleanTitle;
-                                existing.price = price;
-                                existing.image = image;
-                                existing.description = description;
-                                existing.url = url;
-                                existing.isBase = true;
-                            }
-                        }
-                    } else {
-                        const offerId = offer.getAttribute('id');
-                        const uniqueKey = offerId || `no_group_${cleanTitle}_${price}`;
-                        
-                        if (!groupedProducts.has(uniqueKey)) {
-                            groupedProducts.set(uniqueKey, {
-                                title: cleanTitle,
-                        price: price,
-                        image: image,
-                                description: description,
-                                url: url,
-                                category: 'Каталог Orange',
-                                isBase: true
-                            });
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn('Ошибка парсинга товара:', error);
-            }
-        });
-        
-        // Используем стабильные ID из YML (group_id или offer_id) вместо индекса
-        const products = Array.from(groupedProducts.entries()).map(([key, product]) => ({
-            id: key,  // Стабильный ID из YML-фида (совпадает с uid товара в store-API)
-            title: product.title,
-            price: product.price,
-            oldPrice: 0,
-            image: product.image,
-            gallery: product.image ? [product.image] : [],
-            description: product.description,
-            url: product.url,
-            quantity: 0,
-            inStock: true,      // YML отдаёт только то, что в наличии
-            parts: [],
-            editions: [],
-            category: product.category
-        }));
-
-        console.log(`После удаления дублей осталось ${products.length} товаров`);
-
-        // Сортируем по названию для стабильного порядка отображения
-        return products.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
-    }
-    
-    function cleanProductTitle(title) {
-        let cleanTitle = title;
-
-        // Убираем "Как на фото" в разных форматах (с дефисом, слэшем или без)
-        cleanTitle = cleanTitle.replace(/\s*[\/\-]\s*Как на фото\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*Как на фото\s*/gi, '');
-
-        cleanTitle = cleanTitle.replace(/\s*-?\s*Роскошный\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*-?\s*VIP\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*-?\s*Вы наш герой\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*-\s*Роскошный\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*-\s*VIP\s*/gi, '');
-        cleanTitle = cleanTitle.replace(/\s*\(на \d+% (больше )?цветов( больше)?\)\s*/gi, '');
-
-        cleanTitle = cleanTitle.trim();
-
-        return cleanTitle;
-    }
-
-    async function loadTildaCatalog() {
-        const cfg = getStoreConfig();
-        if (cfg.recid === DEFAULT_STORE_RECID && cfg.part === DEFAULT_STORE_PART) {
-            try {
-                return await loadStoreCatalog(cfg, true);
-            } catch (error) {
-                console.warn('Загрузка каталога через FirstVDS не удалась:', error);
-            }
-        }
-        try {
-            return await loadStoreCatalog(cfg);
-        } catch (error) {
-            console.warn('Прямой запрос к каталогу Тильды не удался:', error);
-        }
-        const products = await loadYMLFeed();
-        return { products, parts: [] };
+        products.sort((a, b) => Number(b.inStock) - Number(a.inStock) || a.title.localeCompare(b.title, 'ru'));
+        return { products, parts: data.parts };
     }
 
     function showNotification(message, type) {
@@ -2160,7 +1916,7 @@
 
     function updateCatalogData() {
         if (!catalogRequest) {
-            catalogRequest = loadTildaCatalog().then(({ products, parts }) => {
+            catalogRequest = loadShipshopCatalog().then(({ products, parts }) => {
                 productsCache = products;
                 sitePartsCache = parts;
                 saveCatalogToCache(products, parts);
