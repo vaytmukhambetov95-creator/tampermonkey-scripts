@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         amoCRM - Каталог Orange
 // @namespace    http://tampermonkey.net/
-// @version      11.0.1
+// @version      11.0.2
 // @description  Каталог ШИП-ШОП: цены, наличие, галереи и отправка фото в чат amoCRM
 // @author       Вы
 // @match        https://*.amocrm.ru/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '11.0.1';
+    const SCRIPT_VERSION = '11.0.2';
 
     const SHIPSHOP_ORIGIN = 'https://ship-shop.ru';
     const SHIPSHOP_CATALOG_URL = SHIPSHOP_ORIGIN + '/api/v1/amo-catalog';
@@ -33,6 +33,8 @@
     let sitePartsCache = [];          // дерево категорий сайта
     let activeCustomCategory = null;  // индекс выбранной «моей категории» или null
     let catalogRequest = null;
+    let catalogLoadFailed = false;
+    let catalogLoadedAt = 0;
 
     let customCategories = [];
 
@@ -411,6 +413,7 @@
                 position: relative; z-index: 0; contain: paint; }
             .ocx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; }
             .ocx-empty { grid-column: 1/-1; padding: 60px 0; text-align: center; color: var(--ocx-text-3); font-size: 14px; font-weight: 500; }
+            .ocx-empty .ocx-btn { margin-top: 14px; }
 
             .ocx-card {
                 position: relative;
@@ -763,7 +766,7 @@
                 </div>
             </div>
 
-            <div class="ocx-summary" id="filter-summary"></div>
+            <div class="ocx-summary" id="filter-summary" role="status"></div>
 
             <div class="ocx-body">
                 <div class="ocx-grid" id="tilda-gallery"></div>
@@ -806,7 +809,17 @@
         gallery.innerHTML = '';
 
         if (products.length === 0) {
-            gallery.innerHTML = '<div class="ocx-empty">Ничего не найдено - попробуйте изменить фильтры</div>';
+            const empty = document.createElement('div');
+            empty.className = 'ocx-empty';
+            if (productsCache.length) {
+                empty.textContent = 'Ничего не найдено - попробуйте изменить фильтры';
+            } else if (catalogLoadFailed) {
+                empty.innerHTML = '<div>Не удалось загрузить каталог с сайта.</div><button type="button" class="ocx-btn ocx-btn--ghost">Повторить загрузку</button>';
+                empty.querySelector('button').onclick = loadCatalogInModal;
+            } else {
+                empty.textContent = 'Загружаем каталог…';
+            }
+            gallery.appendChild(empty);
             return;
         }
 
@@ -1133,6 +1146,11 @@
         const el = document.getElementById('filter-summary');
         if (!el) return;
 
+        if (!productsCache.length) {
+            el.textContent = catalogLoadFailed ? 'Каталог временно недоступен' : 'Загрузка с сайта';
+            return;
+        }
+
         const inArchive = document.getElementById('filter-site-part')?.value === ARCHIVE_PART;
         let total = productsCache.filter(p => Boolean(p.archived) === inArchive).length;
         const details = [];
@@ -1143,6 +1161,10 @@
             details.push(`категория «${cat.name}»`);
             const missing = ids.size - total;
             if (missing > 0) details.push(`${missing} ${pluralize(missing, 'товар не найден', 'товара не найдено', 'товаров не найдено')} в каталоге`);
+        }
+        if (!catalogCacheIsFresh()) {
+            details.push('Сохранённая копия, цены и наличие могут отличаться');
+            if (catalogRequest) details.push('Обновляем с сайта…');
         }
         el.textContent = [`Показано ${shownCount} из ${total}`, ...details].join(' · ');
     }
@@ -1192,10 +1214,13 @@
     }
 
     function openCatalogModal() {
-        const cached = catalogCacheIsFresh() ? getCachedCatalog() : null;
-        if (cached?.length) {
-            productsCache = cached;
-            sitePartsCache = getCachedParts();
+        if (!productsCache.length) {
+            const cached = getCachedCatalog();
+            if (cached?.length) {
+                productsCache = cached;
+                sitePartsCache = getCachedParts();
+                catalogLoadedAt = getCachedTimestamp();
+            }
         }
         let overlay = document.getElementById('tilda-catalog-overlay');
 
@@ -1213,15 +1238,11 @@
         renderSitePartsFilter();
         resetFilters();
 
-        if (catalogRequest || cached?.length) return;
+        if (!catalogRequest && !catalogCacheIsFresh()) loadCatalogInModal();
+    }
 
-        const loading = productsCache.length ? null : showNotification('Загружаем каталог…', 'info');
-        updateCatalogData().catch(error => {
-            console.error('Не удалось загрузить каталог:', error);
-            if (!productsCache.length && overlay.style.display !== 'none') {
-                showNotification('Не удалось загрузить каталог. Попробуйте открыть его ещё раз.', 'error');
-            }
-        }).finally(() => loading?.remove());
+    function loadCatalogInModal() {
+        updateCatalogData().catch(error => console.error('Не удалось загрузить каталог:', error));
     }
 
     function closeCatalogModal() {
@@ -1786,19 +1807,24 @@
         }
     }
 
-    function catalogCacheIsFresh() {
+    function getCachedTimestamp() {
         try {
-            const age = Date.now() - Number(localStorage.getItem(CACHE_TS_KEY));
-            return age >= 0 && age < CACHE_MAX_AGE;
+            return Number(localStorage.getItem(CACHE_TS_KEY)) || 0;
         } catch (error) {
-            return false;
+            return 0;
         }
+    }
+
+    function catalogCacheIsFresh() {
+        const age = Date.now() - catalogLoadedAt;
+        return productsCache.length > 0 && age >= 0 && age < CACHE_MAX_AGE;
     }
 
     function getCachedParts() {
         try {
             const cached = localStorage.getItem(PARTS_KEY);
-            return cached ? JSON.parse(cached) : [];
+            const parts = cached ? JSON.parse(cached) : [];
+            return Array.isArray(parts) ? parts : [];
         } catch (error) {
             return [];
         }
@@ -1807,35 +1833,40 @@
     function saveCatalogToCache(products, parts) {
         try {
             localStorage.setItem(CACHE_KEY, JSON.stringify(products));
-            localStorage.setItem(CACHE_TS_KEY, Date.now().toString());
             localStorage.setItem(PARTS_KEY, JSON.stringify(parts));
+            localStorage.setItem(CACHE_TS_KEY, String(catalogLoadedAt));
             console.log(`Каталог сохранён в кэш (${products.length} товаров)`);
         } catch (error) {
             console.error('Ошибка сохранения кэша:', error);
         }
     }
 
-    // Универсальный GET с разбором JSON через GM.xmlHttpRequest
-    function requestJSON(url) {
+    function requestJSON(url, timeout) {
         return new Promise((resolve, reject) => {
+            function fail(message, retryable = false) {
+                const error = new Error(message);
+                error.retryable = retryable;
+                reject(error);
+            }
             GM.xmlHttpRequest({
                 method: 'GET',
                 url: url,
                 headers: { 'Accept': 'application/json, */*' },
                 onload: function(response) {
                     if (response.status !== 200) {
-                        reject(new Error(`Ошибка загрузки: ${response.status}`));
+                        fail(`Ошибка загрузки: ${response.status}`, response.status === 0 || response.status === 408 || response.status >= 500);
                         return;
                     }
                     try {
                         resolve(JSON.parse(response.responseText));
                     } catch (error) {
-                        reject(new Error('Ответ ШИП-ШОП не разобрался как JSON'));
+                        fail('Ответ ШИП-ШОП не разобрался как JSON');
                     }
                 },
-                onerror: function() { reject(new Error('Ошибка соединения с ШИП-ШОП')); },
-                ontimeout: function() { reject(new Error('Таймаут запроса к ШИП-ШОП')); },
-                timeout: 7000
+                onerror: () => fail('Ошибка соединения с ШИП-ШОП', true),
+                ontimeout: () => fail('Таймаут запроса к ШИП-ШОП', true),
+                onabort: () => fail('Запрос к ШИП-ШОП отменён'),
+                timeout
             });
         });
     }
@@ -1864,7 +1895,14 @@
     }
 
     async function loadShipshopCatalog() {
-        const data = await requestJSON(SHIPSHOP_CATALOG_URL);
+        let data;
+        try {
+            data = await requestJSON(SHIPSHOP_CATALOG_URL, 10000);
+        } catch (error) {
+            if (!error.retryable) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            data = await requestJSON(SHIPSHOP_CATALOG_URL, 16000);
+        }
         if (!Array.isArray(data?.products) || !data.products.length || !Array.isArray(data.parts)) {
             throw new Error('ШИП-ШОП вернул пустой каталог или изменил формат ответа');
         }
@@ -1915,15 +1953,23 @@
     }
 
     function updateCatalogData() {
-        if (!catalogRequest) {
-            catalogRequest = loadShipshopCatalog().then(({ products, parts }) => {
-                productsCache = products;
-                sitePartsCache = parts;
-                saveCatalogToCache(products, parts);
-                renderSitePartsFilter();
-                applyFilters();
-            }).finally(() => { catalogRequest = null; });
-        }
+        if (catalogRequest) return catalogRequest;
+
+        catalogLoadFailed = false;
+        catalogRequest = loadShipshopCatalog().then(({ products, parts }) => {
+            productsCache = products;
+            sitePartsCache = parts;
+            catalogLoadedAt = Date.now();
+            saveCatalogToCache(products, parts);
+            renderSitePartsFilter();
+        }).catch(error => {
+            catalogLoadFailed = true;
+            throw error;
+        }).finally(() => {
+            catalogRequest = null;
+            applyFilters();
+        });
+        applyFilters();
         return catalogRequest;
     }
 
